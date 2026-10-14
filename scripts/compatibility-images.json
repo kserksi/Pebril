@@ -1,0 +1,5 @@
+[
+  {"name":"debian12","repository":"library/debian","digest":"sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91","expected_id":"debian","expected_version":"12"},
+  {"name":"ubuntu2204","repository":"library/ubuntu","digest":"sha256:08ea48a03a3e78ebc7cd526e6a275053223aadd88bfc09cc49b06d5281525fde","expected_id":"ubuntu","expected_version":"22.04"},
+  {"name":"rocky98","repository":"rockylinux/rockylinux","digest":"sha256:ed654c694190a670bb5c33f68995b862214fc96ffbdca95e07a8935ba0a3717d","expected_id":"rocky","expected_version":"9.8"}
+]

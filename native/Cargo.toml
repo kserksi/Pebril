@@ -1,0 +1,17 @@
+[package]
+name = "pebril-native"
+version = "0.0.1-dev"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+svg-hush = "=0.9.7"
+gif = "=0.14.2"
+
+[profile.release]
+strip = true
+panic = "unwind"

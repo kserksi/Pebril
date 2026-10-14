@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.zip binary
+*.gz binary
+*.xz binary
+*.png binary
+*.jpg binary
+*.webp binary
+
+# Preserve upstream notices verbatim, including intentional Markdown line breaks.
+third-party/native-NOTICES.txt -whitespace

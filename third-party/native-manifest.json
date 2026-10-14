@@ -1,0 +1,171 @@
+{
+  "review_date": "2026-10-14",
+  "upstream": "https://github.com/kleisauke/libvips-packaging",
+  "tag": "v8.18.5",
+  "upstream_last_push": "2026-10-14T07:35:37Z",
+  "archive_url": "https://github.com/kleisauke/libvips-packaging/releases/download/v8.18.5/libvips-8.18.5-linux-x64.tar.gz",
+  "archive_sha256": "2fc01c30f500db10e85510b77758d412b423ac5d7c9271d2d3539df7d8d074ee",
+  "library_sha256": "2a3b36b1f3e742f204510dc366b183f56723580cb8b490911840c7b1d1f518a1",
+  "elf_requirements": {
+    "glibc": "2.28",
+    "glibcxx": "3.4.22",
+    "cxxabi": "1.3.11",
+    "cpu": [
+      "ssse3",
+      "sse4_1",
+      "sse4_2",
+      "popcnt"
+    ]
+  },
+  "source_recipe": "https://github.com/kleisauke/libvips-packaging/blob/v8.18.5/build/posix.sh",
+  "linux_exclusions": [
+    "proxy-libintl (built only for musl/macOS)",
+    "x265",
+    "libde265"
+  ],
+  "components": [
+    {
+      "name": "aom",
+      "version": "3.14.1",
+      "declared_spdx": "BSD-2-Clause AND LicenseRef-AOM-Patent"
+    },
+    {
+      "name": "archive",
+      "version": "3.8.9",
+      "declared_spdx": "BSD-2-Clause"
+    },
+    {
+      "name": "cairo",
+      "version": "1.18.4",
+      "declared_spdx": "MPL-2.0"
+    },
+    {
+      "name": "cgif",
+      "version": "0.5.3",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "exif",
+      "version": "0.6.26",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "expat",
+      "version": "2.8.2",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "ffi",
+      "version": "3.7.1",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "fontconfig",
+      "version": "2.18.3",
+      "declared_spdx": "Fontconfig"
+    },
+    {
+      "name": "freetype",
+      "version": "2.14.3",
+      "declared_spdx": "FTL"
+    },
+    {
+      "name": "fribidi",
+      "version": "1.0.16",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "glib",
+      "version": "2.89.3",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "harfbuzz",
+      "version": "14.3.0",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "heif",
+      "version": "1.23.1",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "highway",
+      "version": "1.4.0",
+      "declared_spdx": "BSD-3-Clause"
+    },
+    {
+      "name": "imagequant",
+      "version": "2.4.1",
+      "declared_spdx": "BSD-2-Clause"
+    },
+    {
+      "name": "lcms",
+      "version": "2.19.1",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "mozjpeg",
+      "version": "0826579",
+      "declared_spdx": "Zlib AND IJG AND BSD-3-Clause"
+    },
+    {
+      "name": "pango",
+      "version": "1.58.2",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "pixman",
+      "version": "0.46.4",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "png",
+      "version": "1.6.58",
+      "declared_spdx": "Libpng"
+    },
+    {
+      "name": "rsvg",
+      "version": "2.62.90",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "tiff",
+      "version": "4.7.2",
+      "declared_spdx": "libtiff"
+    },
+    {
+      "name": "uhdr",
+      "version": "1.5.1",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "vips",
+      "version": "8.18.5",
+      "declared_spdx": "LGPL-3.0-only"
+    },
+    {
+      "name": "webp",
+      "version": "1.6.0",
+      "declared_spdx": "BSD-3-Clause"
+    },
+    {
+      "name": "xml2",
+      "version": "2.15.3",
+      "declared_spdx": "MIT"
+    },
+    {
+      "name": "zlib-ng",
+      "version": "2.3.3",
+      "declared_spdx": "Zlib"
+    }
+  ],
+  "embedded_in_vips": [
+    {
+      "name": "libnsgif",
+      "version": "Bundled with libvips 8.18.5 source",
+      "declared_spdx": "MIT"
+    }
+  ],
+  "review_scope": "Fixed asset SHA256, upstream build options, ELF requirements, and upstream component license declarations reviewed. Pebril does not redistribute this libvips binary; startup downloads it from the pinned upstream. Full product release acceptance remains pending."
+}

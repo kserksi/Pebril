@@ -1,0 +1,402 @@
+{
+  "scope": "Fixed dependencies with declarations and original license texts reviewed; maintenance exceptions are separate approvals.",
+  "packages": [
+    {
+      "ecosystem": "go",
+      "name": "github.com/fsnotify/fsnotify",
+      "version": "v1.10.1",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/gabriel-vasile/mimetype",
+      "version": "v1.4.12",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/gin-contrib/sse",
+      "version": "v1.1.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/gin-gonic/gin",
+      "version": "v1.12.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/go-playground/locales",
+      "version": "v0.14.1",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/go-playground/universal-translator",
+      "version": "v0.18.1",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/go-playground/validator/v10",
+      "version": "v10.30.1",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/goccy/go-yaml",
+      "version": "v1.19.2",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/joho/godotenv",
+      "version": "v1.5.1",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/leodido/go-urn",
+      "version": "v1.4.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/mattn/go-isatty",
+      "version": "v0.0.20",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/mattn/go-sqlite3",
+      "version": "v1.14.52",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/pelletier/go-toml/v2",
+      "version": "v2.2.4",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/quic-go/qpack",
+      "version": "v0.6.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/quic-go/quic-go",
+      "version": "v0.59.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "go.mongodb.org/mongo-driver/v2",
+      "version": "v2.5.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/crypto",
+      "version": "v0.48.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/net",
+      "version": "v0.51.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/sys",
+      "version": "v0.41.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/text",
+      "version": "v0.34.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "google.golang.org/protobuf",
+      "version": "v1.36.10",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "base64",
+      "version": "0.23.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "color_quant",
+      "version": "1.1.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "data-url",
+      "version": "0.3.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "displaydoc",
+      "version": "0.2.7",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "form_urlencoded",
+      "version": "1.2.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "gif",
+      "version": "0.14.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_collections",
+      "version": "2.3.0",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_locale_core",
+      "version": "2.3.0",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_normalizer",
+      "version": "2.3.0",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_normalizer_data",
+      "version": "2.3.0",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_properties",
+      "version": "2.3.0",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_properties_data",
+      "version": "2.3.0",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "icu_provider",
+      "version": "2.3.1",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "idna",
+      "version": "1.1.0",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "idna_adapter",
+      "version": "1.2.2",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "litemap",
+      "version": "0.8.3",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "percent-encoding",
+      "version": "2.3.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "potential_utf",
+      "version": "0.1.6",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "quick-error",
+      "version": "2.0.1",
+      "license": "MIT/Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "quote",
+      "version": "1.0.47",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "serde",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "serde_core",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "smallvec",
+      "version": "1.16.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "stable_deref_trait",
+      "version": "1.2.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "svg-hush",
+      "version": "0.9.7",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "syn",
+      "version": "3.0.9",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "synstructure",
+      "version": "0.14.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "tinystr",
+      "version": "0.8.4",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "unicode-ident",
+      "version": "1.0.27",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "url",
+      "version": "2.5.8",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "utf8_iter",
+      "version": "1.0.4",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "weezl",
+      "version": "0.1.12",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "writeable",
+      "version": "0.6.4",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "xml",
+      "version": "1.4.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "yoke",
+      "version": "0.8.3",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "yoke-derive",
+      "version": "0.8.4",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "zerofrom",
+      "version": "0.1.8",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "zerofrom-derive",
+      "version": "0.1.8",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "zerotrie",
+      "version": "0.2.5",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "zerovec",
+      "version": "0.11.8",
+      "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "rust",
+      "name": "zerovec-derive",
+      "version": "0.11.6",
+      "license": "Unicode-3.0"
+    }
+  ],
+  "maintenance_exceptions": [
+    {
+      "name": "quick-error",
+      "version": "2.0.1",
+      "via": "svg-hush 0.9.7",
+      "license": "MIT OR Apache-2.0",
+      "approved_by": "Project owner",
+      "approved_date": "2026-10-14",
+      "repository": "https://github.com/tailhook/quick-error",
+      "last_push": "2024-04-21",
+      "risk": "No recent repository pushes; approval covers this pinned version only. Review again before upgrading or replacing it."
+    }
+  ]
+}
