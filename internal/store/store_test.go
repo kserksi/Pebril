@@ -36,10 +36,10 @@ func TestStoreLockMigrationAndFutureVersion(t *testing.T) {
 		t.Fatal(e)
 	}
 	var count int
-	if e = s.DB.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); e != nil || count != 1 {
+	if e = s.DB.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); e != nil || count != 2 {
 		t.Fatal("Migration is not idempotent", e)
 	}
-	if _, e = s.DB.Exec("INSERT INTO schema_migrations VALUES(2,0)"); e != nil {
+	if _, e = s.DB.Exec("INSERT INTO schema_migrations VALUES(3,0)"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

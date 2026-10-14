@@ -1,0 +1,177 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/kserksi/Pebril/internal/auth"
+	"github.com/kserksi/Pebril/internal/store"
+	"github.com/kserksi/Pebril/internal/uploads"
+)
+
+const sessionCookie = "pebril_session"
+
+func sameOrigin(c *gin.Context) bool {
+	origin, err := url.Parse(c.GetHeader("Origin"))
+	return err == nil && (origin.Scheme == "http" || origin.Scheme == "https") && origin.Host == c.Request.Host && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == ""
+}
+func sessionFor(service *auth.Service, c *gin.Context) (auth.Session, error) {
+	token, err := c.Cookie(sessionCookie)
+	if err != nil {
+		return auth.Session{}, err
+	}
+	return service.Session(token)
+}
+func requireSession(service *auth.Service, write bool, next func(auth.Session, *gin.Context)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetHeader("Authorization") != "" {
+			c.JSON(403, gin.H{"error": "Upload tokens cannot access this endpoint"})
+			return
+		}
+		session, err := sessionFor(service, c)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Sign in is required"})
+			return
+		}
+		if write && (!sameOrigin(c) || !auth.CheckCSRF(c.GetHeader("X-CSRF-Token"), session.CSRF)) {
+			c.JSON(403, gin.H{"error": "Origin or CSRF validation failed"})
+			return
+		}
+		next(session, c)
+	}
+}
+func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Service) {
+	router.GET("/api/v1/account", func(c *gin.Context) {
+		if c.GetHeader("Authorization") != "" {
+			c.JSON(403, gin.H{"error": "Upload tokens cannot access account data"})
+			return
+		}
+		initialized, err := service.Initialized()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Cannot read initialization status"})
+			return
+		}
+		session, err := sessionFor(service, c)
+		if err != nil {
+			c.JSON(200, gin.H{"initialized": initialized})
+			return
+		}
+		c.JSON(200, gin.H{"initialized": initialized, "user": session.User, "csrf": session.CSRF})
+	})
+	for _, path := range []string{"initialize", "login"} {
+		path := path
+		router.POST("/api/v1/"+path, func(c *gin.Context) {
+			if c.GetHeader("Authorization") != "" || !sameOrigin(c) {
+				c.JSON(403, gin.H{"error": "Use the official same-origin web flow"})
+				return
+			}
+			var credentials struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
+			decoder := json.NewDecoder(c.Request.Body)
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&credentials); err != nil || decoder.Decode(new(any)) != io.EOF {
+				c.JSON(400, gin.H{"error": "Invalid account request"})
+				return
+			}
+			var session auth.Session
+			var err error
+			if path == "initialize" {
+				var user store.User
+				user, err = service.Initialize(credentials.Username, credentials.Password)
+				if err == nil {
+					session, err = service.NewSession(user)
+				}
+			} else {
+				session, err = service.Login(credentials.Username, credentials.Password)
+			}
+			if err != nil {
+				status, message := 500, "Account operation failed"
+				if errors.Is(err, auth.ErrInput) {
+					status, message = 400, err.Error()
+				}
+				if errors.Is(err, auth.ErrInitialized) {
+					status, message = 409, err.Error()
+				}
+				if errors.Is(err, auth.ErrCredentials) {
+					status, message = 401, err.Error()
+				}
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
+			origin, _ := url.Parse(c.GetHeader("Origin"))
+			http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", Expires: session.Expires, MaxAge: int(auth.SessionLifetime.Seconds()), HttpOnly: true, Secure: c.Request.TLS != nil || origin.Scheme == "https", SameSite: http.SameSiteStrictMode})
+			c.JSON(200, gin.H{"user": session.User, "csrf": session.CSRF})
+		})
+	}
+	router.POST("/api/v1/logout", requireSession(service, true, func(_ auth.Session, c *gin.Context) {
+		token, _ := c.Cookie(sessionCookie)
+		if err := service.Logout(token); err != nil {
+			c.JSON(500, gin.H{"error": "Cannot revoke session"})
+			return
+		}
+		http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		c.JSON(200, gin.H{"signed_out": true})
+	}))
+	router.POST("/api/v1/upload-token", requireSession(service, true, func(session auth.Session, c *gin.Context) {
+		token, err := service.IssueToken(session.User.ID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Cannot issue upload token"})
+			return
+		}
+		c.JSON(201, gin.H{"token": token})
+	}))
+	router.DELETE("/api/v1/upload-token", requireSession(service, true, func(session auth.Session, c *gin.Context) {
+		if err := service.RevokeToken(session.User.ID); err != nil {
+			c.JSON(500, gin.H{"error": "Cannot revoke upload token"})
+			return
+		}
+		c.JSON(200, gin.H{"revoked": true})
+	}))
+	if upload == nil {
+		return
+	}
+	router.POST("/api/v1/uploads", func(c *gin.Context) {
+		var user store.User
+		var err error
+		authorization := c.GetHeader("Authorization")
+		if authorization != "" {
+			if !strings.HasPrefix(authorization, "Bearer ") {
+				c.JSON(401, gin.H{"error": "A valid upload token is required"})
+				return
+			}
+			user, err = service.UploadUser(strings.TrimPrefix(authorization, "Bearer "))
+		} else {
+			var session auth.Session
+			session, err = sessionFor(service, c)
+			if err == nil {
+				if !sameOrigin(c) || !auth.CheckCSRF(c.GetHeader("X-CSRF-Token"), session.CSRF) {
+					c.JSON(403, gin.H{"error": "Origin or CSRF validation failed"})
+					return
+				}
+				user = session.User
+			}
+		}
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Upload authentication failed"})
+			return
+		}
+		uploadHandler(upload, user, c)
+	})
+	router.GET("/api/v1/uploads/:id", requireSession(service, false, func(session auth.Session, c *gin.Context) {
+		image, err := upload.Result(c.Param("id"), session.User.ID)
+		if err != nil {
+			c.JSON(404, gin.H{"error": "Upload not found"})
+			return
+		}
+		c.JSON(200, image)
+	}))
+	router.GET("/image/:id", func(c *gin.Context) { publicSVG(upload, c) })
+}

@@ -2,8 +2,10 @@ package nativeprobe
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,5 +49,15 @@ func TestVersionComparison(t *testing.T) {
 		if got := atLeast(test.actual, test.minimum); got != test.want {
 			t.Fatal(test, got)
 		}
+	}
+}
+
+func TestBufferedCopyCannotBypassOutputLimit(t *testing.T) {
+	var buffer boundedBuffer
+	if _, err := io.Copy(&buffer, strings.NewReader(strings.Repeat("x", 65*1024))); err == nil {
+		t.Fatal("io.Copy bypassed the output bound")
+	}
+	if buffer.Len() > 64*1024 {
+		t.Fatal("Output buffer exceeded the bound")
 	}
 }

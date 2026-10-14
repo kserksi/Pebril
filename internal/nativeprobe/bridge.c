@@ -29,6 +29,7 @@ int probe_vips(const char *library,const char *directory,int avif,char *version,
  snprintf(version,vs,"%s",vips_version_string());
  int major=vips_version(0),minor=vips_version(1),patch=vips_version(2);
  if(major<8||(major==8&&(minor<16||(minor==16&&patch<1)))){snprintf(error,es,"Compatible libvips >=8.16.1 required; found %s",version);return 0;}
+ if(!dlsym(handle,"vips_avg")||!dlsym(handle,"vips_foreign_find_load")||!dlsym(handle,"vips_image_get_int")||!dlsym(handle,"vips_cache_set_max")){snprintf(error,es,"Missing upload validation ABI");return 0;}
  if(vips_init("pebril-probe")){snprintf(error,es,"Initialization failed: %s",vips_error_buffer());return 0;}
  Dl_info info;if(dladdr((void*)vips_init,&info))snprintf(loaded,ls,"%s",info.dli_fname);
  const char *ops[]={"pngload","pngsave","jpegload","jpegsave","webpload","webpsave","gifload"};
@@ -54,6 +55,40 @@ int probe_rust(const char *library,char *error,int es){
  void *handle=dlopen(library,RTLD_NOW|RTLD_LOCAL);if(!handle){snprintf(error,es,"Cannot load internal Rust library: %s",dlerror());return 0;}
  unsigned int (*abi)(void)=dlsym(handle,"pebril_native_abi");
  unsigned int (*probe)(void)=dlsym(handle,"pebril_native_probe");
- if(!abi||!probe||abi()!=1){snprintf(error,es,"Incompatible internal Rust library ABI");return 0;}
+ if(!abi||!probe||!dlsym(handle,"pebril_verify_file")||abi()!=1){snprintf(error,es,"Incompatible internal Rust library ABI");return 0;}
  unsigned int bits=probe();if(bits!=3){snprintf(error,es,"Rust sanitization/animation self-test failed; capability bits %u",bits);return 0;}return 1;
+}
+
+int verify_raster(const char *library,const char *input,long long limit,int *width,int *height,int *frames,char *format,int fs,char *error,int es){
+ void *handle=dlopen(library,RTLD_NOW|RTLD_LOCAL);if(!handle){snprintf(error,es,"Image runtime unavailable");return 0;}
+ #define IMAGE_SYM(type,name) type name=(type)dlsym(handle,#name);if(!name){snprintf(error,es,"Missing image ABI %s",#name);return 0;}
+ typedef int (*init_fn)(const char*);typedef const char* (*find_fn)(const char*);typedef const char* (*str_fn)(void);
+ typedef void* (*read_fn)(const char*,...);typedef int (*size_fn)(const void*);typedef int (*meta_fn)(const void*,const char*,int*);
+ typedef int (*avg_fn)(void*,double*,...);typedef void (*free_fn)(void*);typedef void (*cache_fn)(int);
+ IMAGE_SYM(init_fn,vips_init);IMAGE_SYM(find_fn,vips_foreign_find_load);IMAGE_SYM(str_fn,vips_error_buffer);
+ IMAGE_SYM(read_fn,vips_image_new_from_file);IMAGE_SYM(size_fn,vips_image_get_width);IMAGE_SYM(size_fn,vips_image_get_height);
+ IMAGE_SYM(meta_fn,vips_image_get_int);IMAGE_SYM(avg_fn,vips_avg);IMAGE_SYM(free_fn,g_object_unref);IMAGE_SYM(cache_fn,vips_cache_set_max);
+ if(vips_init("pebril-verify")){snprintf(error,es,"Image runtime initialization failed");return 0;}
+ vips_cache_set_max(0);
+ const char *loader=vips_foreign_find_load(input);int multi=0;
+ if(loader&&strstr(loader,"Png"))snprintf(format,fs,"png");
+ else if(loader&&strstr(loader,"Jpeg"))snprintf(format,fs,"jpeg");
+ else if(loader&&strstr(loader,"Webp")){snprintf(format,fs,"webp");multi=1;}
+ else if(loader&&strstr(loader,"Heif")){snprintf(format,fs,"avif");multi=1;}
+ else {snprintf(error,es,"Unsupported image content");return 0;}
+ void *image=multi?vips_image_new_from_file(input,"access",1,"fail_on",3,"n",-1,NULL):vips_image_new_from_file(input,"access",1,"fail_on",3,NULL);
+ if(!image){snprintf(error,es,"Image header is invalid");return 0;}
+ int w=vips_image_get_width(image),h=vips_image_get_height(image),n=1,page=h;
+ if(multi){vips_image_get_int(image,"n-pages",&n);vips_image_get_int(image,"page-height",&page);}
+ if(w<=0||h<=0||n<=0||page<=0||h/page!=n||(long long)w>limit/h){g_object_unref(image);snprintf(error,es,"Image pixel limit exceeded");return 0;}
+ double average;
+ if(vips_avg(image,&average,NULL)){g_object_unref(image);snprintf(error,es,"Image content is corrupt or incomplete");return 0;}
+ *width=w;*height=page;*frames=n;g_object_unref(image);return 1;
+}
+int verify_rust_file(const char *library,const char *input,const char *output,int svg,unsigned long long limit,unsigned long long bytes,int *width,int *height,int *frames){
+ void *handle=dlopen(library,RTLD_NOW|RTLD_LOCAL);if(!handle)return 0;
+ unsigned int (*verify)(const char*,const char*,unsigned int,unsigned long long,unsigned long long,unsigned int*,unsigned int*,unsigned int*)=dlsym(handle,"pebril_verify_file");
+ if(!verify)return 0;
+ unsigned int w=0,h=0,n=0;unsigned int ok=verify(input,output,svg,limit,bytes,&w,&h,&n);
+ *width=(int)w;*height=(int)h;*frames=(int)n;return ok!=0;
 }

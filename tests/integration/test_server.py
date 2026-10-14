@@ -49,7 +49,7 @@ def main():
             process = subprocess.Popen([str(executable)], env=env, cwd='/', stdout=log, stderr=log)
             try:
                 status = wait_status(port, process)
-                assert status['sqlite'] and status['stage'] == 'foundation'
+                assert status['sqlite'] and status['stage'] == 'uploads'
                 revision = status['config_revision']
                 (root / 'replacement.json').write_text('{"static_quality":73}')
                 (root / 'replacement.json').replace(root / 'config.json')

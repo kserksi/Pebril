@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kserksi/Pebril/internal/auth"
 	"github.com/kserksi/Pebril/internal/config"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
 	"github.com/kserksi/Pebril/internal/server"
 	"github.com/kserksi/Pebril/internal/store"
+	"github.com/kserksi/Pebril/internal/uploads"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,7 +22,7 @@ import (
 	"time"
 )
 
-var version = "0.0.2-dev"
+var version = "0.0.3-dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -41,6 +43,20 @@ func run() error {
 		return json.NewEncoder(os.Stdout).Encode(nativeprobe.ProbeLocal(args[1], args[2], args[3], avif))
 	}
 
+	if len(args) > 0 && args[0] == "_image-verify" {
+		if len(args) != 6 {
+			return errors.New("Invalid image validation arguments")
+		}
+		data, err := os.ReadFile(args[5])
+		if err != nil {
+			return err
+		}
+		var policy config.Runtime
+		if err = json.Unmarshal(data, &policy); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(nativeprobe.VerifyLocal(args[1], args[2], args[3], args[4], policy))
+	}
 	command := "serve"
 	if len(args) > 0 {
 		command = args[0]
@@ -97,6 +113,15 @@ func run() error {
 		return err
 	}
 	defer database.Close()
+	authentication, err := auth.New(database)
+	if err != nil {
+		return err
+	}
+	upload, err := uploads.New(database, manager, deploy, executable, capability)
+	if err != nil {
+		return err
+	}
+	defer upload.Close()
 	if err = manager.Watch(func(err error) {
 		if err != nil {
 			slog.Error("New configuration rejected; retaining the last valid configuration", "error", err)
@@ -110,10 +135,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	httpServer := &http.Server{Handler: server.Handler(version, manager, database, capability), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 * 1024}
+	httpServer := &http.Server{Handler: server.HandlerWithUploads(version, manager, database, capability, authentication, upload), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 * 1024}
 	stopped := make(chan error, 1)
 	go func() { stopped <- httpServer.Serve(listener) }()
-	slog.Info("Foundation service started", "version", version, "address", listener.Addr().String(), "libvips", capability.VipsVersion)
+	slog.Info("Upload service started", "version", version, "address", listener.Addr().String(), "libvips", capability.VipsVersion)
 	select {
 	case err = <-stopped:
 		if errors.Is(err, http.ErrServerClosed) {

@@ -64,11 +64,24 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > 1 {
-		return fail(fmt.Errorf("Database schema version %d exceeds supported version 1", version))
+	if version > 2 {
+		return fail(fmt.Errorf("Database schema version %d exceeds supported version 2", version))
 	}
 	if version == 0 {
 		_, err = tx.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().UnixMilli())
+		if err != nil {
+			return fail(err)
+		}
+	}
+	if version < 2 {
+		_, err = tx.Exec(`
+CREATE TABLE users(id INTEGER PRIMARY KEY,username TEXT NOT NULL UNIQUE,password BLOB NOT NULL,admin INTEGER NOT NULL DEFAULT 0 CHECK(admin IN (0,1)),status TEXT NOT NULL DEFAULT 'active',quota INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX only_one_admin ON users(admin) WHERE admin=1;
+CREATE TABLE sessions(hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),csrf TEXT NOT NULL,expires INTEGER NOT NULL);
+CREATE TABLE upload_tokens(user_id INTEGER PRIMARY KEY REFERENCES users(id),hash TEXT NOT NULL UNIQUE);
+CREATE TABLE images(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),state TEXT NOT NULL,policy BLOB NOT NULL,created_at INTEGER NOT NULL,format TEXT NOT NULL DEFAULT '',bytes INTEGER NOT NULL DEFAULT 0,width INTEGER NOT NULL DEFAULT 0,height INTEGER NOT NULL DEFAULT 0,frames INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',hash TEXT NOT NULL DEFAULT '');
+CREATE INDEX image_tasks ON images(state,user_id);
+INSERT INTO schema_migrations(version,applied_at) VALUES(2,CAST(strftime('%s','now') AS INTEGER)*1000);`)
 		if err != nil {
 			return fail(err)
 		}

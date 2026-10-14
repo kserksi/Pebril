@@ -68,13 +68,18 @@ func ProbeLocal(library, rustPath, scratch string, avif bool) Result {
 }
 func GLIBCVersion() string { return C.GoString(C.probe_glibc_version()) }
 
-type boundedBuffer struct{ bytes.Buffer }
+// Keep Buffer named so io.Copy cannot bypass Write through promoted ReadFrom/WriteTo.
+type boundedBuffer struct{ buffer bytes.Buffer }
+
+func (b *boundedBuffer) Len() int                      { return b.buffer.Len() }
+func (b *boundedBuffer) String() string                { return b.buffer.String() }
+func (b *boundedBuffer) Read(data []byte) (int, error) { return b.buffer.Read(data) }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 64*1024 {
 		return 0, errors.New("Native self-test output exceeds 64KiB")
 	}
-	return b.Buffer.Write(p)
+	return b.buffer.Write(p)
 }
 
 // Native probes do not load libraries in the main process; crashes, timeouts, and invalid output reject startup.
@@ -93,7 +98,8 @@ func runChild(ctx context.Context, executable, dir, library string, avif bool) (
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
 	command.WaitDelay = time.Second
-	var out, stderr boundedBuffer
+	out := cancelingImageBuffer{cancel: cancel}
+	stderr := cancelingImageBuffer{cancel: cancel}
 	command.Stdout = &out
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
