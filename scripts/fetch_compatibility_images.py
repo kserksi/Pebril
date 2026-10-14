@@ -49,6 +49,6 @@ def fetch(entry):
 
 if __name__ == '__main__':
     from concurrent.futures import ThreadPoolExecutor
-    entries = json.loads((ROOT / 'scripts/compatibility-images.json').read_text())
+    entries = json.loads((ROOT / 'tests/compatibility/images.json').read_text())
     with ThreadPoolExecutor(max_workers=3) as executor:
         list(executor.map(fetch, entries))

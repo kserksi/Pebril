@@ -10,7 +10,7 @@ import tempfile
 import time
 import urllib.request
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 def wait_status(port, process):
     deadline = time.monotonic() + 8

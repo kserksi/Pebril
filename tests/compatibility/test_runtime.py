@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 def stop_application(process, executable):
     identity = executable.stat()
@@ -87,5 +87,5 @@ def test_image(entry):
         print(entry['name'], 'Passed: offline missing-runtime refusal, fresh runtime download, AVIF self-tests, offline reuse, internal-library recovery, SQLite/HTTP startup, and SIGTERM shutdown', flush=True)
 
 if __name__ == '__main__':
-    for image in json.loads((ROOT / 'scripts/compatibility-images.json').read_text()):
+    for image in json.loads(Path(__file__).resolve().with_name('images.json').read_text()):
         test_image(image)

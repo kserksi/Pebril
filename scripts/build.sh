@@ -15,8 +15,8 @@ Path("internal/nativeassets/runtime_native.gz").write_bytes(gzip.compress((Path(
 PYCODE
 trap 'rm -f internal/nativeassets/runtime_native.gz' EXIT
 CGO_ENABLED=1 go build -tags nomsgpack,bundled_native -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$(cat VERSION)" -o dist/pebril ./cmd/pebril
-cp .env.example config.example.json LICENSE dist/
-python3 scripts/third_party.py
+cp configs/.env.example configs/config.example.json LICENSE dist/
+python3 scripts/build/collect_licenses.py
 printf 'Built %s; a missing compatible libvips triggers pinned-runtime installation and self-tests.\n' "$(cat VERSION)"
 
 python3 - <<'PYCODE'

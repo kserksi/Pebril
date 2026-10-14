@@ -64,3 +64,6 @@ __pycache__/
 # Only the root README is public Markdown documentation
 *.md
 !/README.md
+
+# Cargo output from direct native-module builds
+/native/target/

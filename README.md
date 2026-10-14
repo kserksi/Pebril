@@ -6,7 +6,7 @@
 
 ## Current version
 
-The development baseline is **0.0.1-dev**. It provides service startup, validated configuration and hot reload, SQLite initialization, native capability checks and library installation, and a basic status page. Image uploading is not available in this build. Interfaces and configuration may change.
+The development baseline is **0.0.2-dev**. It provides service startup, validated configuration and hot reload, SQLite initialization, native capability checks and library installation, and a basic status page. Image uploading is not available in this build. Interfaces and configuration may change.
 
 ## Run
 
@@ -14,8 +14,8 @@ Download the Linux x64 archive and SHA256SUMS from Releases. Verify the archive 
 
 ```bash
 sha256sum -c SHA256SUMS
-tar -xzf pebril-0.0.1-dev-linux-amd64.tar.gz
-cd pebril-0.0.1-dev-linux-amd64
+tar -xzf pebril-*-linux-amd64.tar.gz
+cd pebril-*-linux-amd64
 ./pebril version
 ./pebril check
 ./pebril
@@ -33,7 +33,22 @@ The supplied binary requires Linux x64, glibc 2.34 or newer, and the system C/C+
 
 With Go, GCC, Rust/Cargo, pkg-config, Python, and ELF inspection tools available, run `./scripts/build.sh`. Build output is placed in `dist/`. Dependency versions are fixed in go.mod/go.sum and native/Cargo.lock. Deployment does not require build tools.
 
-Applicable checks include Go build/vet/test, Rust tests, script syntax checks, and `python3 scripts/test_integration.py`. Optional compatibility checks are provided by the scripts directory. These checks cover the foundation; full product acceptance is incomplete.
+Applicable checks include Go build/vet/test, Rust tests, script syntax checks, and `python3 tests/integration/test_server.py`. Optional compatibility checks use `scripts/fetch_compatibility_images.py` and `tests/compatibility/test_runtime.py`. These checks cover the foundation; full product acceptance is incomplete.
+
+## Repository layout
+
+| Directory | Contents |
+|---|---|
+| `cmd/pebril/` | Application entry point |
+| `internal/` | Private Go implementation and unit tests |
+| `native/` | Internal Rust library and lockfile |
+| `configs/` | Deployment and runtime configuration examples |
+| `scripts/` | Build entry point and test preparation tools |
+| `tests/integration/` | Service integration checks |
+| `tests/compatibility/` | Runtime compatibility checks and pinned inputs |
+| `third-party/` | Dependency provenance and license metadata |
+
+The build copies configuration examples into `dist/` for deployment.
 
 ## Feedback and licensing
 
