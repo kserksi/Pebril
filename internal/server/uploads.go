@@ -6,7 +6,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kserksi/Pebril/internal/store"
@@ -87,7 +86,7 @@ func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
 			c.JSON(500, gin.H{"error": "Cannot read upload result"})
 			return
 		}
-		if image.State == "failed" {
+		if image.State == "failed" && image.Format == "" {
 			c.JSON(422, gin.H{"error": image.Error, "id": image.ID})
 			return
 		}
@@ -101,34 +100,37 @@ func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
 		return
 	}
 }
-func publicSVG(service *uploads.Service, c *gin.Context) {
-	path, err := service.PublicSVG(c.Param("id"))
+func publicImage(service *uploads.Service, cover bool, c *gin.Context) {
+	image, reference, file, err := service.OpenPublic(c.Param("id"), cover)
 	if err != nil {
 		c.Status(404)
 		return
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		c.Status(404)
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		c.Status(500)
 		return
 	}
-	image, err := service.DB.Image(c.Param("id"))
-	if err != nil {
-		c.Status(404)
+	policy := image.Policy.Policy
+	if image.Temporary {
+		c.Header("Cache-Control", "no-store")
+		ttl := fmt.Sprintf("public, max-age=%d", policy.FallbackCDNSeconds)
+		c.Header("CDN-Cache-Control", ttl)
+		c.Header("Cloudflare-CDN-Cache-Control", ttl)
+	} else {
+		c.Header("Cache-Control", cacheHeader(policy.PublicBrowserSeconds, policy.PublicCDNSeconds))
+	}
+	types := map[string]string{"svg": "image/svg+xml", "png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif", "avif": "image/avif"}
+	kind, ok := types[reference.Format]
+	if !ok {
+		c.Status(500)
 		return
 	}
-	policy := image.Policy.Policy
-	c.Header("Cache-Control", cacheHeader(policy.PublicBrowserSeconds, policy.PublicCDNSeconds))
 	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-	c.Header("Content-Type", "image/svg+xml")
-	c.Header("ETag", `"`+image.Hash+`"`)
-	http.ServeContent(c.Writer, c.Request, "image.svg", info.ModTime(), f)
+	c.Header("Content-Type", kind)
+	c.Header("ETag", `"`+reference.Hash+`"`)
+	http.ServeContent(c.Writer, c.Request, "image", info.ModTime(), file)
 }
 
 func cacheHeader(browser, cdn int64) string {

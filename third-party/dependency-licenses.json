@@ -384,6 +384,42 @@
       "name": "zerovec-derive",
       "version": "0.11.6",
       "license": "Unicode-3.0"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/davidbyttow/govips/v2",
+      "version": "v2.19.0",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/image",
+      "version": "v0.41.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/crypto",
+      "version": "v0.51.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/net",
+      "version": "v0.55.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/sys",
+      "version": "v0.45.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/text",
+      "version": "v0.37.0",
+      "license": "BSD-3-Clause"
     }
   ],
   "maintenance_exceptions": [

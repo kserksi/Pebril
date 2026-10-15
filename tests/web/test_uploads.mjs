@@ -20,7 +20,8 @@ class XMLHttpRequest {
  setRequestHeader(){}
  send(body){this.upload.onprogress({lengthComputable:true,loaded:5,total:10});queueMicrotask(()=>{const svg=body.file.name.endsWith('.svg');this.status=svg?201:202;this.responseText=JSON.stringify(svg?{id:'1',state:'completed',url:'/image/1'}:{id:'2',state:'queued'});this.onload();});}
 }
-const context=vm.createContext({document,FormData,XMLHttpRequest,URL,location:{href:'https://example.invalid/'},navigator:{clipboard:{async writeText(value){clipboard=value;}}},localStorage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)},fetch:async path=>({ok:true,json:async()=>path.endsWith('/status')?{version:'test',config_revision:1,sqlite:true,native:{svg:true,gif:true}}:{initialized:true,user,csrf:'fixture'}})});
+const timers=[];let currentImage={id:'2',state:'queued'};
+const context=vm.createContext({setTimeout:callback=>timers.push(callback),document,FormData,XMLHttpRequest,URL,location:{href:'https://example.invalid/'},navigator:{clipboard:{async writeText(value){clipboard=value;}}},localStorage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)},fetch:async path=>({ok:true,json:async()=>path.includes('/uploads/')?currentImage:path.endsWith('/status')?{version:'test',config_revision:1,sqlite:true,native:{svg:true,gif:true}}:{initialized:true,user,csrf:'fixture'}})});
 vm.runInContext(fs.readFileSync(new URL('../../internal/server/web/app.js',import.meta.url),'utf8'),context);
 await new Promise(resolve=>setImmediate(resolve));
 assert(document.querySelector('#total-progress').textContent.includes('owner-one-file'));
@@ -36,6 +37,16 @@ assert.equal(rows[0].children[2].value,100);
 assert.notEqual(rows[1].children[2].value,100);
 await document.querySelector('#copy-markdown').listeners.click();
 assert.equal(clipboard,'![](https://example.invalid/image/1)');
+currentImage={id:'2',state:'retry_wait',error:'Image conversion failed',temporary:true,url:'/image/2'};timers.shift()();
+await new Promise(resolve=>setImmediate(resolve));
+assert.match(document.querySelector('#total-progress').textContent,/Failed: 1/);
+assert.notEqual(rows[1].children[2].value,100);
+await document.querySelector('#copy-urls').listeners.click();
+assert.equal(clipboard,'https://example.invalid/image/1\nhttps://example.invalid/image/2');
+currentImage={id:'2',state:'completed',url:'/image/2'};timers.shift()();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(rows[1].children[2].value,100);
+assert.match(document.querySelector('#total-progress').textContent,/Completed: 2\/2/);
 user={id:2,username:'other-fixture',used:0,quota:100};
 await context.loadAccount();
 assert.equal(document.querySelector('#upload-results').children.length,0);

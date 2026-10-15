@@ -173,5 +173,22 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 		}
 		c.JSON(200, image)
 	}))
-	router.GET("/image/:id", func(c *gin.Context) { publicSVG(upload, c) })
+	router.POST("/api/v1/uploads/:id/retry", requireSession(service, true, func(session auth.Session, c *gin.Context) {
+		if err := upload.Retry(c.Param("id"), session.User.ID); err != nil {
+			status := 400
+			if uploads.IsCapacity(err) {
+				status = 429
+			}
+			c.JSON(status, gin.H{"error": "Cannot retry this image"})
+			return
+		}
+		image, err := upload.Result(c.Param("id"), session.User.ID)
+		if err != nil {
+			c.Status(500)
+			return
+		}
+		c.JSON(202, image)
+	}))
+	router.GET("/image/:id", func(c *gin.Context) { publicImage(upload, false, c) })
+	router.GET("/image/:id/cover", func(c *gin.Context) { publicImage(upload, true, c) })
 }

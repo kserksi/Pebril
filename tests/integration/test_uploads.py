@@ -74,16 +74,25 @@ class Client:
             response = error
         with response:
             data = response.read()
-            assert response.code == expected, (path, response.code, expected)
+            assert response.code in (expected if isinstance(expected, tuple) else (expected,)), (path, response.code, expected)
             value = json.loads(data) if 'application/json' in response.headers.get('Content-Type', '') else data
             if isinstance(value, dict) and 'csrf' in value: self.csrf = value['csrf']
-            return value, dict(response.headers)
-    def upload(self, data, expected=202, token=None, extra=False, name='image.bin'):
+            return value, response.headers
+    def upload(self, data, expected=(201,202), token=None, extra=False, name='image.bin'):
         boundary = secrets.token_hex(16)
         body = f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode() + data + b'\r\n'
         if extra: body += f'--{boundary}\r\nContent-Disposition: form-data; name="other"\r\n\r\ninvalid\r\n'.encode()
         body += f'--{boundary}--\r\n'.encode()
         return self.request('/api/v1/uploads', 'POST', body, token=token, expected=expected, content_type='multipart/form-data; boundary=' + boundary)[0]
+
+def wait_image(client, identifier, state='completed', timeout=20):
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        image=client.request('/api/v1/uploads/'+identifier)[0]
+        if image['state']==state: return image
+        if state=='completed' and image['state'] in ('failed','retry_wait'): raise AssertionError(('Conversion failed',image))
+        time.sleep(.05)
+    raise AssertionError(('Image state timeout',state,image))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -98,7 +107,7 @@ def main():
         root = Path(temporary)
         executable = root / 'pebril'
         shutil.copy2(ROOT / 'dist/pebril', executable)
-        shutil.copytree(ROOT / 'dist/bin', root / 'bin')
+        shutil.copytree(ROOT / 'dist/bin', root / 'bin', symlinks=True)
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
         data = args.data_dir.resolve() if args.data_dir else root / 'data'
@@ -122,8 +131,8 @@ def main():
         database = data / 'db/pebril.db'
         if args.data_dir and database.exists():
             with sqlite3.connect(database) as connection:
-                connection.execute('DELETE FROM images'); connection.execute('DELETE FROM sessions'); connection.execute('DELETE FROM upload_tokens'); connection.execute('UPDATE users SET used=0,quota=?',(1<<30,))
-            for relative in ['.incoming','image']: shutil.rmtree(data / relative,ignore_errors=True)
+                connection.execute('DELETE FROM image_files') if connection.execute("SELECT 1 FROM sqlite_master WHERE name='image_files'").fetchone() else None; connection.execute('DELETE FROM images'); connection.execute('DELETE FROM sessions'); connection.execute('DELETE FROM upload_tokens'); connection.execute('UPDATE users SET used=0,quota=?',(1<<30,))
+            for relative in ['.incoming','.converting','image']: shutil.rmtree(data / relative,ignore_errors=True)
         seed_helper = root / 'account-fixture'
         build_env = dict(env, GOCACHE=str(ROOT / '.build/go-cache'), GOMODCACHE=str(ROOT / '.build/go-mod'), GOPATH=str(ROOT / '.build/go-path'))
         subprocess.run(['go','build','-o',str(seed_helper),'./tests/integration/account_fixture'],cwd=ROOT,env=build_env,check=True)
@@ -152,7 +161,10 @@ def main():
                 ordinary.request('/api/v1/upload-token','POST',token=token,expected=403)
                 first = ordinary.upload(fixtures['png'],token=token)
                 second = ordinary.upload(fixtures['png'],name='../../untrusted.jpg')
-                assert first['id'] != second['id'] and first['format'] == 'png' and not first.get('url')
+                assert first['id'] != second['id']
+                first = wait_image(ordinary, first['id'])
+                second = wait_image(ordinary, second['id'])
+                assert first['format'] == second['format'] == 'webp'
                 ordinary.request('/api/v1/uploads/' + first['id'])
                 admin.request('/api/v1/uploads/' + first['id'],expected=404)
                 anonymous.request('/api/v1/uploads/' + first['id'],token=token,expected=403)
@@ -163,14 +175,14 @@ def main():
                 assert headers['Cache-Control'] == 'public, max-age=259200, s-maxage=1296000'
                 assert 'sandbox' in headers['Content-Security-Policy']
                 assert (data / 'image/public/.objects' / hashlib.sha256(content).hexdigest()).exists()
-                anonymous.request('/image/' + first['id'],expected=404)
-                assert len(list((data / 'image/public/.objects').iterdir())) == 2
+                assert anonymous.request('/image/' + first['id'])[1]['Content-Type'] == 'image/webp'
                 with sqlite3.connect(database) as connection:
                     hashes = connection.execute('SELECT hash FROM images WHERE id IN (?,?)',(first['id'],second['id'])).fetchall()
                     assert hashes[0] == hashes[1]
-                    assert connection.execute('SELECT used FROM users WHERE id=?',(ordinary_id,)).fetchone()[0] == 2*len(fixtures['png']) + len(content)
+                    assert connection.execute('SELECT used FROM users WHERE id=?',(ordinary_id,)).fetchone()[0] == first['storage_bytes']+second['storage_bytes']+len(content)
+                    assert connection.execute("SELECT count(*) FROM image_files WHERE role='original' AND hash=?",(hashlib.sha256(fixtures['png']).hexdigest(),)).fetchone()[0] == 2
                 for key in ['jpg','webp','gif','animated-webp']:
-                    uploaded = ordinary.upload(fixtures[key])
+                    uploaded = wait_image(ordinary, ordinary.upload(fixtures[key])['id'])
                     assert uploaded['frames'] == (2 if key in ('gif','animated-webp') else 1), (key,uploaded)
                 ordinary.upload(fixtures['avif'],expected=422)
                 ordinary.upload(b'<svg xmlns="http://www.w3.org/2000/svg"><rect>',expected=422)
@@ -211,7 +223,8 @@ def main():
                 admin.upload(svg,expected=201)
                 admin.upload(svg,expected=429)
                 update('UPDATE users SET quota=? WHERE id=?',(1<<30,admin_id))
-                for _ in range(4): ordinary.upload(fixtures['png'])
+                for _ in range(10):
+                    update("INSERT INTO images(id,user_id,state,policy,created_at) VALUES(?,?,'receiving',?,?)",(secrets.token_hex(16),ordinary_id,json.dumps({'revision':1,'policy':policy}),int(time.time()*1000)))
                 ordinary.upload(svg,expected=429)
                 ordinary.request('/api/v1/logout','POST')
                 ordinary.upload(svg,expected=401)
@@ -235,19 +248,19 @@ def main():
             try:
                 ordinary.request('/api/v1/login','POST',{'username':credentials['user'],'password':credentials['password']})
                 recovered = ordinary.request('/api/v1/uploads/' + first['id'])[0]
-                assert recovered['state'] == 'queued' and recovered['id'] == first['id']
+                assert recovered['state'] == 'completed' and recovered['id'] == first['id']
                 assert anonymous.request(safe['url'])[0] == content
                 deadline = time.monotonic()+10
                 while time.monotonic()<deadline:
                     with sqlite3.connect(database) as connection:
                         states = dict(connection.execute('SELECT id,state FROM images WHERE id IN (?,?)',(received_id,partial_id)).fetchall())
-                    if states.get(received_id)=='queued': break
+                    if states.get(received_id)=='completed': break
                     time.sleep(.05)
-                assert states == {received_id:'queued',partial_id:'failed'}, states
+                assert states == {received_id:'completed',partial_id:'failed'}, states
                 assert not list((data / '.incoming').iterdir()), 'Recovery left task-owned temporary files'
                 admin.request('/api/v1/login','POST',{'username':credentials['admin_user'],'password':credentials['admin_password']})
-                avif_image=admin.upload(fixtures['avif'])
-                assert avif_image['format']=='avif' and avif_image['state']=='queued'
+                avif_image=wait_image(admin,admin.upload(fixtures['avif'])['id'])
+                assert avif_image['format']=='webp' and avif_image['state']=='completed'
                 assert admin.request('/api/v1/status')[0]['native']['avif_enabled']
             finally:
                 process.terminate(); process.wait(timeout=15)
@@ -258,15 +271,16 @@ def main():
             try:
                 admin.request('/api/v1/login','POST',{'username':credentials['admin_user'],'password':credentials['admin_password']})
                 admin.upload(fixtures['avif'],expected=422)
-                assert admin.request('/api/v1/uploads/'+avif_image['id'])[0]['format']=='avif'
+                assert admin.request('/api/v1/uploads/'+avif_image['id'])[0]['format']=='webp'
+                assert anonymous.request(avif_image['url'])[1]['Content-Type']=='image/webp'
             finally:
                 process.terminate();process.wait(timeout=15)
         if args.data_dir:
             # Preserve only the explicitly authorized hashed development accounts.
             with sqlite3.connect(database) as connection:
-                connection.execute('DELETE FROM images'); connection.execute('DELETE FROM sessions'); connection.execute('DELETE FROM upload_tokens'); connection.execute('UPDATE users SET used=0,quota=?',(1<<30,))
+                connection.execute('DELETE FROM image_files') if connection.execute("SELECT 1 FROM sqlite_master WHERE name='image_files'").fetchone() else None; connection.execute('DELETE FROM images'); connection.execute('DELETE FROM sessions'); connection.execute('DELETE FROM upload_tokens'); connection.execute('UPDATE users SET used=0,quota=?',(1<<30,))
             with sqlite3.connect(database) as connection: connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-            for relative in ['.incoming','image']:
+            for relative in ['.incoming','.converting','image']:
                 shutil.rmtree(data / relative,ignore_errors=True)
     print('Upload integration passed: authentication, scopes, content safety, limits, SVG delivery, deduplication, quota, revocation, restart persistence and cleanup.')
 

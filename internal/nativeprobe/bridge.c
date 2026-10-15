@@ -55,7 +55,7 @@ int probe_rust(const char *library,char *error,int es){
  void *handle=dlopen(library,RTLD_NOW|RTLD_LOCAL);if(!handle){snprintf(error,es,"Cannot load internal Rust library: %s",dlerror());return 0;}
  unsigned int (*abi)(void)=dlsym(handle,"pebril_native_abi");
  unsigned int (*probe)(void)=dlsym(handle,"pebril_native_probe");
- if(!abi||!probe||!dlsym(handle,"pebril_verify_file")||abi()!=1){snprintf(error,es,"Incompatible internal Rust library ABI");return 0;}
+ if(!abi||!probe||!dlsym(handle,"pebril_verify_file")||!dlsym(handle,"pebril_encode_gif")||abi()!=1){snprintf(error,es,"Incompatible internal Rust library ABI");return 0;}
  unsigned int bits=probe();if(bits!=3){snprintf(error,es,"Rust sanitization/animation self-test failed; capability bits %u",bits);return 0;}return 1;
 }
 

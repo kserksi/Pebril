@@ -128,3 +128,72 @@ mod upload_tests {
         assert!(super::validate_gif_pixels(&frame,None).is_err());
     }
 }
+
+// Encode complete RGBA frames produced by the controlled worker; no service state crosses this ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pebril_encode_gif(input:*const c_char,output:*const c_char,width:u32,height:u32,frames:u32,delays:*const i32,loops:u32)->u32 {
+    catch_unwind(|| -> Result<(),String> {
+        use std::io::{Read,BufWriter,Write};
+        let w=u16::try_from(width).map_err(|e|e.to_string())?;
+        let h=u16::try_from(height).map_err(|e|e.to_string())?;
+        if w==0 || h==0 || frames<2 {return Err("Invalid animation dimensions".into());}
+        let input=unsafe {CStr::from_ptr(input)}.to_str().map_err(|e|e.to_string())?;
+        let output=unsafe {CStr::from_ptr(output)}.to_str().map_err(|e|e.to_string())?;
+        let mut source=BufReader::new(File::open(input).map_err(|e|e.to_string())?);
+        let target=File::create(output).map_err(|e|e.to_string())?;
+        let mut target=BufWriter::new(target);
+        {
+            let mut encoder=gif::Encoder::new(&mut target,w,h,&[]).map_err(|e|e.to_string())?;
+            let repeat=if loops==0 {gif::Repeat::Infinite} else {gif::Repeat::Finite(u16::try_from(loops-1).map_err(|e|e.to_string())?)};
+            encoder.set_repeat(repeat).map_err(|e|e.to_string())?;
+            let mut rgba=vec![0;usize::from(w)*usize::from(h)*4];
+            for i in 0..frames {
+                source.read_exact(&mut rgba).map_err(|e|e.to_string())?;
+                let mut frame=gif::Frame::from_rgba(w,h,&mut rgba);
+                let ms=unsafe {*delays.add(i as usize)};
+                if ms<0 {return Err("Invalid frame delay".into());}
+                frame.delay=u16::try_from((ms as u32+5)/10).map_err(|e|e.to_string())?;
+                frame.dispose=gif::DisposalMethod::Background;
+                encoder.write_frame(&frame).map_err(|e|e.to_string())?;
+            }
+            let mut extra=[0u8;1];if source.read(&mut extra).map_err(|e|e.to_string())?!=0 {return Err("Unexpected frame data".into());}
+            encoder.into_inner().map_err(|e|e.to_string())?;
+        }
+        target.flush().map_err(|e|e.to_string())?;
+        target.get_ref().sync_all().map_err(|e|e.to_string())?;
+        Ok(())
+    }).map(|r|u32::from(r.is_ok())).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod encode_tests {
+    use super::*;
+    use std::ffi::CString;
+    #[test]
+    fn gif_encoding_preserves_frame_timing_repeat_and_transparency() {
+        use std::io::Write;
+        let directory=std::env::temp_dir().join(format!("pebril-gif-{}",std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let input=directory.join("input");let output=directory.join("output");
+        let input_name=CString::new(input.to_str().unwrap()).unwrap();let output_name=CString::new(output.to_str().unwrap()).unwrap();
+        let delays=[50,120];
+        let rgba=[255,0,0,255,0,0,0,0,0,255,0,255,0,0,0,0];
+        std::fs::write(&input,rgba).unwrap();
+        for loops in [0,1,3] {
+            assert_eq!(unsafe {pebril_encode_gif(input_name.as_ptr(),output_name.as_ptr(),2,1,2,delays.as_ptr(),loops)},1);
+            let mut options=gif::DecodeOptions::new();options.set_color_output(gif::ColorOutput::RGBA);
+            let mut decoder=options.read_info(File::open(&output).unwrap()).unwrap();
+            let first=decoder.read_next_frame().unwrap().unwrap();
+            assert_eq!(first.delay,5);assert_eq!(&*first.buffer,&rgba[..8]);
+            let second=decoder.read_next_frame().unwrap().unwrap();
+            assert_eq!(second.delay,12);assert_eq!(&*second.buffer,&rgba[8..]);
+            assert!(decoder.read_next_frame().unwrap().is_none());
+            assert_eq!(decoder.repeat(),if loops==0 {gif::Repeat::Infinite} else {gif::Repeat::Finite((loops-1) as u16)});
+        }
+        assert_eq!(unsafe {pebril_encode_gif(input_name.as_ptr(),output_name.as_ptr(),0,1,2,delays.as_ptr(),0)},0);
+        assert_eq!(unsafe {pebril_encode_gif(input_name.as_ptr(),output_name.as_ptr(),2,1,1,delays.as_ptr(),0)},0);
+        std::fs::OpenOptions::new().append(true).open(&input).unwrap().write_all(&[0]).unwrap();
+        assert_eq!(unsafe {pebril_encode_gif(input_name.as_ptr(),output_name.as_ptr(),2,1,2,delays.as_ptr(),0)},0);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

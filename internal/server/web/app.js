@@ -80,7 +80,7 @@ function uploadFile(file, row, progress) {
 function updateTotal() {
   const completed=results.filter(row => row.image?.state==='completed').length;
   const failed=results.filter(row => row.failed).length;
-  document.querySelector('#total-progress').textContent=`Completed: ${completed}/${results.length}. Failed: ${failed}. Stored raster images remain pending conversion.`;
+  document.querySelector('#total-progress').textContent=`Completed: ${completed}/${results.length}. Failed: ${failed}.`;
 }
 function savePending() {
   if(!account)return;
@@ -92,7 +92,7 @@ document.querySelector('#upload').addEventListener('click', async () => {
   for(const file of files){const item=document.createElement('li');const name=document.createElement('span');name.textContent=file.name;const status=document.createElement('p');status.textContent='0% pending upload';const progress=document.createElement('progress');progress.max=100;progress.value=0;progress.setAttribute('aria-label',`Upload progress for ${file.name}`);item.append(name,status,progress);document.querySelector('#upload-results').append(item);results.push({name:file.name,file,item,status,progress});}
   savePending();updateTotal();
   for(const row of results.filter(row=>row.file && !row.image && !row.failed)){
-    try {row.image=await uploadFile(row.file,row,row.progress);if(row.image.state==='completed'){row.progress.value=100;const link=document.createElement('a');link.href=row.image.url;link.textContent=new URL(row.image.url,location.href).href;row.status.replaceChildren('100% ready: ',link);}else if(row.image.state==='failed'){throw new Error(row.image.error || 'Image validation failed');}else {row.status.textContent=`Stored safely (${row.image.state}); conversion and a final link are not available yet.`;row.progress.removeAttribute('value');}}
+    try {row.image=await uploadFile(row.file,row,row.progress);renderImage(row);if(!['completed','failed'].includes(row.image.state)){watchImage(row,account.id);}}
     catch(error){row.failed=true;row.status.textContent=error.message;}
     row.file=null;savePending();updateTotal();
   }
@@ -105,3 +105,38 @@ async function copyLinks(markdown) {
 document.querySelector('#copy-urls').addEventListener('click',()=>copyLinks(false));
 document.querySelector('#copy-markdown').addEventListener('click',()=>copyLinks(true));
 loadAccount().catch(error => {accountStatus.textContent=error.message;});
+
+function renderImage(row) {
+  const image=row.image;
+  row.failed=['failed','retry_wait'].includes(image.state);
+  if(image.state==='completed' && image.url) {
+    row.progress.value=100;
+    const link=document.createElement('a');link.href=image.url;link.textContent=new URL(image.url,location.href).href;
+    row.status.replaceChildren('100% ready: ',link);
+  } else {
+    row.progress.removeAttribute('value');
+    row.status.textContent=image.error ? `${image.error}${image.state==='retry_wait' ? ' Automatic retry pending.' : ''}` : `Processing: ${image.state}.`;
+    if(image.temporary && image.url) {
+      const link=document.createElement('a');link.href=image.url;link.textContent='Temporary original link';row.status.append(' ',link);
+    }
+    if(image.state==='failed' && image.retryable) {
+      const button=document.createElement('button');button.type='button';button.textContent='Retry conversion';
+      button.addEventListener('click',async()=>{
+        button.disabled=true;
+        try {row.image=await api(`uploads/${image.id}/retry`,'POST');row.failed=false;renderImage(row);watchImage(row,account.id);}
+        catch(error){row.status.textContent=error.message;}finally{button.disabled=false;}
+      });
+      row.status.append(' ',button);
+    }
+  }
+  savePending();updateTotal();
+}
+async function watchImage(row,owner) {
+  while(account?.id===owner && !['completed','failed'].includes(row.image.state)) {
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    if(account?.id!==owner)return;
+    try {const image=await api(`uploads/${row.image.id}`);if(account?.id!==owner)return;row.image=image;renderImage(row);}
+    catch(error){row.status.textContent=`Cannot refresh processing result: ${error.message}`;return;}
+  }
+  if(account?.id===owner)loadAccount().catch(()=>{});
+}

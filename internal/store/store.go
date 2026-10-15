@@ -64,8 +64,8 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > 2 {
-		return fail(fmt.Errorf("Database schema version %d exceeds supported version 2", version))
+	if version > 3 {
+		return fail(fmt.Errorf("Database schema version %d exceeds supported version 3", version))
 	}
 	if version == 0 {
 		_, err = tx.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().UnixMilli())
@@ -82,6 +82,21 @@ CREATE TABLE upload_tokens(user_id INTEGER PRIMARY KEY REFERENCES users(id),hash
 CREATE TABLE images(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),state TEXT NOT NULL,policy BLOB NOT NULL,created_at INTEGER NOT NULL,format TEXT NOT NULL DEFAULT '',bytes INTEGER NOT NULL DEFAULT 0,width INTEGER NOT NULL DEFAULT 0,height INTEGER NOT NULL DEFAULT 0,frames INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',hash TEXT NOT NULL DEFAULT '');
 CREATE INDEX image_tasks ON images(state,user_id);
 INSERT INTO schema_migrations(version,applied_at) VALUES(2,CAST(strftime('%s','now') AS INTEGER)*1000);`)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	if version < 3 {
+		_, err = tx.Exec(`
+ALTER TABLE images ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE images ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE images ADD COLUMN next_run INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE images ADD COLUMN fallback INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX conversion_schedule ON images(state,next_run,user_id,created_at);
+CREATE TABLE image_files(image_id TEXT NOT NULL REFERENCES images(id) ON DELETE CASCADE,role TEXT NOT NULL,hash TEXT NOT NULL,bytes INTEGER NOT NULL,format TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,frames INTEGER NOT NULL,PRIMARY KEY(image_id,role));
+CREATE INDEX image_file_hash ON image_files(hash);
+INSERT INTO image_files SELECT id,CASE WHEN state='completed' THEN 'result' ELSE 'original' END,hash,bytes,format,width,height,frames FROM images WHERE hash<>'';
+INSERT INTO schema_migrations(version,applied_at) VALUES(3,CAST(strftime('%s','now') AS INTEGER)*1000);`)
 		if err != nil {
 			return fail(err)
 		}

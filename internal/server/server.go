@@ -45,7 +45,7 @@ func HandlerWithUploads(version string, manager *config.Manager, database *store
 		c.JSON(200, gin.H{"ready": true})
 	})
 	router.GET("/api/v1/status", func(c *gin.Context) {
-		c.JSON(200, gin.H{"name": "Pebril", "version": version, "stage": "uploads", "config_revision": manager.Snapshot().Revision, "sqlite": database.Ping() == nil, "native": gin.H{"ready": capability.Ready, "libvips_version": capability.VipsVersion, "svg": capability.SVG, "gif": capability.GIF, "avif_enabled": capability.AVIF}})
+		c.JSON(200, gin.H{"name": "Pebril", "version": version, "stage": "conversion", "config_revision": manager.Snapshot().Revision, "sqlite": database.Ping() == nil, "native": gin.H{"ready": capability.Ready, "libvips_version": capability.VipsVersion, "svg": capability.SVG, "gif": capability.GIF, "avif_enabled": capability.AVIF}})
 	})
 	accountRoutes(router, authentication, upload)
 	files, _ := fs.Sub(assets, "web")

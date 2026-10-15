@@ -36,15 +36,52 @@ func TestStoreLockMigrationAndFutureVersion(t *testing.T) {
 		t.Fatal(e)
 	}
 	var count int
-	if e = s.DB.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); e != nil || count != 2 {
+	if e = s.DB.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); e != nil || count != 3 {
 		t.Fatal("Migration is not idempotent", e)
 	}
-	if _, e = s.DB.Exec("INSERT INTO schema_migrations VALUES(3,0)"); e != nil {
+	if _, e = s.DB.Exec("INSERT INTO schema_migrations VALUES(4,0)"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
 	if other, e := Open(dir); e == nil {
 		other.Close()
 		t.Fatal("Future database schema was not rejected")
+	}
+}
+
+func TestUpgradeVersionTwoPreservesRecordsAndCharges(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB.Exec(`INSERT INTO users(id,username,password,quota,used) VALUES(1,'fixture',x'00',1024,20);
+ INSERT INTO images(id,user_id,state,policy,created_at,hash,bytes,format,frames) VALUES('original',1,'queued','{"revision":1,"policy":{}}',0,'input',8,'png',1),('safe',1,'completed','{"revision":1,"policy":{}}',0,'output',12,'svg',1);
+ DROP TABLE image_files; DROP INDEX conversion_schedule;
+ ALTER TABLE images DROP COLUMN generation; ALTER TABLE images DROP COLUMN attempts; ALTER TABLE images DROP COLUMN next_run; ALTER TABLE images DROP COLUMN fallback;
+ DELETE FROM schema_migrations WHERE version=3;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	original, err := s.Image("original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := s.Image("safe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := s.User(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if FileRole(original.Files, "original").Hash != "input" || FileRole(completed.Files, "result").Hash != "output" || completed.URL != "/image/safe" || user.Used != 20 {
+		t.Fatal("Migration changed retained records or storage charges")
 	}
 }

@@ -58,9 +58,11 @@ def test_image(entry):
         assert (app / 'bin/vips-current').is_symlink()
         assert not (app / 'data').exists()
         (app / 'bin/libpebril_native.so').unlink()
+        (app / 'bin/pebril-image-worker').unlink()
         repeat = subprocess.run(base + ['/app/pebril', 'check'], env=offline, capture_output=True, text=True, timeout=35)
         assert repeat.returncode == 0, repeat.stderr
         assert (app / 'bin/libpebril_native.so').exists()
+        assert (app / 'bin/pebril-image-worker').exists()
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]

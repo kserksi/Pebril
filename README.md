@@ -36,30 +36,32 @@ In the planned workflow, an upload creates a managed image, processing prepares 
 
 ## What is available today?
 
-The current development version is **0.0.3-dev**. It adds basic authenticated image uploads to the service foundation. Sanitized SVG can be shared through a public link; raster images are stored pending conversion. The complete image host is still in development. Downloadable builds and their changes are listed in [Releases](https://github.com/kserksi/Pebril/releases).
+The current development release is **0.0.4-dev**. It adds raster conversion, public result links, animation covers and conversion retries to authenticated uploads. Sanitized SVG is shared without rasterization. The complete image host is still in development. Downloadable builds and their changes are listed in [Releases](https://github.com/kserksi/Pebril/releases).
 
 | Capability | Current status |
 |---|---|
 | Service startup, configuration validation, and runtime JSON hot reload | Available |
 | SQLite initialization and single-instance protection | Available; basic account and upload records are persisted |
 | Native runtime checks, verified library installation, and internal-library recovery | Available |
-| PNG/JPEG/WebP and optional AVIF encode/decode checks | Available as self-tests, not a user-facing conversion API |
+| Static image conversion | PNG, JPEG, WebP and deployment-enabled AVIF output |
 | Rust GIF validation and SVG sanitation | Available for uploads and native self-tests |
 | Basic status page, readiness endpoint, and status API | Available |
 | Web administrator initialization, login/logout, and upload-only token issuance/revocation | Available |
 | Basic web/API image reception, validation, source-byte quota checks, and safe persistence | Available |
 | Sanitized SVG links | Available for completed SVG uploads |
-| Raster uploads | Stored pending conversion; no final link yet |
+| Raster uploads | Converted asynchronously; completed results have public record URLs |
 | Ordinary registration, gallery management, and full account administration | Planned; unavailable |
-| Upload feedback and ordered link copying | Basic reception feedback and completed SVG links available |
-| Raster conversion, conversion retries, and complete progress/history | Planned; unavailable |
-| Raster links, private sharing, and PicGo upload integration | Planned; unavailable |
+| Upload feedback and ordered link copying | Reception feedback, processing polling, failures, and URL/Markdown copying |
+| Animation and conversion retries | Animated WebP/GIF output, WebP covers, automatic and eligible manual retries |
+| Complete gallery and durable upload history | Planned; unavailable |
+| Private sharing and PicGo upload integration | Planned; unavailable |
+| Automatic resource-pressure handling and operational warnings | Planned; unavailable |
 
 Interfaces and configuration may change. Passing current checks does not establish production readiness or full image-processing acceptance.
 
 ## Where is the project heading?
 
-The next development step is image conversion, tracked in [Issue #6](https://github.com/kserksi/Pebril/issues/6), with a target date of **October 17, 2026 (Asia/Shanghai)**. This is a planning target, not an available feature or performance guarantee. Other unfinished plans have no new estimated completion dates; see the Roadmap for current status. Basic account access is available, while ordinary registration and administrator user management remain pending.
+The image-conversion iteration is tracked in [Issue #6](https://github.com/kserksi/Pebril/issues/6). The next confirmed development iteration, `0.0.5-dev`, will improve runtime setup through an embedded startup script and explicit installation consent; it is tracked in [Issue #20](https://github.com/kserksi/Pebril/issues/20) and is not included in this release. Other unfinished plans have no new estimated completion dates; see the Roadmap for current status. Basic account access is available, while ordinary registration and administrator user management remain pending.
 
 The first complete version is intended to provide a usable self-hosted image backend, basic APIs, and a simple upload and management website. The planned core connects multi-user image management, modern-format processing, and public/private sharing. The initial deployment focus is a Linux binary with local storage.
 
@@ -84,9 +86,9 @@ The default address is `127.0.0.1:8080`. `/` and `/login` display the basic acco
 
 On a fresh deployment, initialize the unique administrator through the page, then sign in and select images. PNG, JPEG, GIF, WebP, and SVG are accepted when enabled; AVIF additionally requires deployment capability and its format switch. Content is verified after reception. Unsafe/corrupt/oversized files are rejected; SVG is sanitized before permanent storage. APNG is currently rejected.
 
-This iteration stores raster images pending the future conversion module, returning no ordinary original hotlink. Sanitized SVG can complete with a link. Queued raster records occupy active upload slots; full conversion and gallery workflows remain unavailable.
+Raster uploads are processed asynchronously. Defaults retain the original and produce WebP at the original dimensions with quality 80. Animated inputs remain animated and receive a separate WebP cover. SVG is sanitized and served without rasterization. Configured dimensions fit within the requested box without cropping or enlargement; transparent JPEG output uses a white background. Full gallery and original-download workflows remain unavailable.
 
-Issue or revoke an upload-only token on the page. The basic API uses `POST /api/v1/uploads`, a single multipart field named `file`, and an `Authorization: Bearer <token>` header. A completed SVG returns HTTP201 and a relative `url`; a queued raster returns HTTP202 without a final URL. Resolve relative links against your service address. This is not yet a PicGo-compatible final-result workflow. Do not put credentials in URLs.
+Issue or revoke an upload-only token on the page. The basic API uses `POST /api/v1/uploads`, a single multipart field named `file`, and an `Authorization: Bearer <token>` header. A completed upload returns HTTP201 and a relative `url`; a processing receipt returns HTTP202. Sign in with an owner session to poll `GET /api/v1/uploads/:id`; upload-only tokens cannot query status or retry conversions. Resolve relative links against your service address. This is not yet a PicGo-compatible final-result workflow. On conversion failure, the page shows the error and a temporary original link when permitted. Eligible manual retry uses the owner session and CSRF-protected `POST /api/v1/uploads/:id/retry`. Originals are otherwise internal; temporary links switch to the result when conversion succeeds. Do not put credentials in URLs.
 
 Passwords are hashed with bcrypt; web sessions expire after seven days. Login cookies use HttpOnly and SameSite=Strict, with Secure for HTTPS. Web writes require same-origin requests and a CSRF token. Deploy external access behind HTTPS. The application ships no default account or password; ordinary web registration and full account management are not implemented yet.
 
@@ -98,15 +100,16 @@ The supplied binary requires Linux x64, glibc 2.34 or newer, and the system C/C+
 
 ## Build and checks
 
-With Go, GCC, Rust/Cargo, pkg-config, Python, and ELF inspection tools available, run `./scripts/build.sh`. Build output is placed in `dist/`. Dependency versions are fixed in go.mod/go.sum and native/Cargo.lock. Deployment does not require build tools.
+With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development headers/libraries, Python, and ELF inspection tools available, run `./scripts/build.sh`. Build output is placed in `dist/`. Dependency versions are fixed in go.mod/go.sum and native/Cargo.lock. Deployment does not require build tools.
 
-Applicable checks include Go build/vet/test, Rust tests, script syntax checks, and `python3 tests/integration/test_server.py`. Optional compatibility checks use `scripts/fetch_compatibility_images.py` and `tests/compatibility/test_runtime.py`. `node tests/web/test_uploads.mjs` checks the plain JavaScript workflow without frontend dependencies. `python3 tests/integration/test_uploads.py` also checks image reception and permission boundaries, using generated fixture credentials by default. Tests do not require hardcoded accounts. These checks cover the current modules; full product acceptance is incomplete.
+Applicable checks include Go build/vet/test, Rust tests, script syntax checks, and `python3 tests/integration/test_server.py`. Optional compatibility checks use `scripts/fetch_compatibility_images.py` and `tests/compatibility/test_runtime.py`. `node tests/web/test_uploads.mjs` checks the plain JavaScript workflow without frontend dependencies. `python3 tests/integration/test_uploads.py` also checks image reception and permission boundaries, using generated fixture credentials by default. Tests do not require hardcoded accounts. `python3 tests/integration/test_conversion.py` covers actual conversion outputs, metadata, animation, retries and recovery. Use `nomsgpack,image_worker` build tags for full Go vet/test checks and provide the worker native build prerequisites. These checks cover the current modules; full product and resource-pressure acceptance is incomplete.
 
 ## Repository layout
 
 | Directory | Contents |
 |---|---|
-| `cmd/pebril/` | Application entry point |
+| `cmd/pebril/` | Main service entry point |
+| `cmd/pebril-image-worker/` | Project-owned isolated conversion worker |
 | `internal/` | Private Go implementation and unit tests |
 | `native/` | Internal Rust library and lockfile |
 | `configs/` | Deployment and runtime configuration examples |

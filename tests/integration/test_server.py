@@ -31,7 +31,7 @@ def main():
         root = Path(temporary)
         executable = root / 'pebril'
         shutil.copy2(ROOT / 'dist/pebril', executable)
-        shutil.copytree(ROOT / 'dist/bin', root / 'bin', symlinks=False)
+        shutil.copytree(ROOT / 'dist/bin', root / 'bin', symlinks=True)
         # Start from another working directory to verify paths remain relative to the executable.
         env = {k: v for k, v in os.environ.items() if not k.startswith('PEBRIL_')}
         assert subprocess.check_output([str(executable), 'version'], env=env, cwd='/').decode().strip() == (ROOT / 'VERSION').read_text().strip()
@@ -40,6 +40,7 @@ def main():
         capability = json.loads(check.stdout)
         assert capability['ready'] and capability['raster'] and capability['svg'] and capability['gif']
         assert not list((root / 'bin').glob('.probe-*'))
+        assert (root / 'bin/pebril-image-worker').exists()
         assert not (root / 'data/db/pebril.db').exists(), 'check must not create the application database'
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
@@ -49,7 +50,7 @@ def main():
             process = subprocess.Popen([str(executable)], env=env, cwd='/', stdout=log, stderr=log)
             try:
                 status = wait_status(port, process)
-                assert status['sqlite'] and status['stage'] == 'uploads'
+                assert status['sqlite'] and status['stage'] == 'conversion'
                 revision = status['config_revision']
                 (root / 'replacement.json').write_text('{"static_quality":73}')
                 (root / 'replacement.json').replace(root / 'config.json')

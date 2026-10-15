@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/kserksi/Pebril/internal/auth"
 	"github.com/kserksi/Pebril/internal/config"
+	"github.com/kserksi/Pebril/internal/imageproc"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
 	"github.com/kserksi/Pebril/internal/server"
 	"github.com/kserksi/Pebril/internal/store"
@@ -22,7 +23,7 @@ import (
 	"time"
 )
 
-var version = "0.0.3-dev"
+var version = "0.0.4-dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -94,6 +95,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	capability, err := nativeprobe.Run(ctx, executable, deploy.NativeDir, deploy.AVIF)
+	if err == nil {
+		capability.VipsPath, capability.VipsVersion, err = imageproc.Prepare(ctx, deploy.NativeDir, capability.VipsPath)
+		if err != nil {
+			capability.Ready = false
+			capability.Errors = append(capability.Errors, "Conversion runtime preparation failed")
+		}
+	}
 	if command == "check" {
 		if e := json.NewEncoder(os.Stdout).Encode(capability); e != nil {
 			return e
@@ -138,7 +146,7 @@ func run() error {
 	httpServer := &http.Server{Handler: server.HandlerWithUploads(version, manager, database, capability, authentication, upload), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 * 1024}
 	stopped := make(chan error, 1)
 	go func() { stopped <- httpServer.Serve(listener) }()
-	slog.Info("Upload service started", "version", version, "address", listener.Addr().String(), "libvips", capability.VipsVersion)
+	slog.Info("Image service started", "version", version, "address", listener.Addr().String(), "libvips", capability.VipsVersion)
 	select {
 	case err = <-stopped:
 		if errors.Is(err, http.ErrServerClosed) {

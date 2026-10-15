@@ -37,11 +37,12 @@ type Service struct {
 	objects    sync.Mutex
 	lifecycle  sync.Mutex
 	closing    bool
+	queue      conversionQueue
 }
 
 func New(db *store.Store, m *config.Manager, d config.Deployment, executable string, capability nativeprobe.Result) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency)}
+	s := &Service{DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
 	for _, dir := range []string{s.incoming(), s.objectDir()} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			cancel()
@@ -140,6 +141,10 @@ func New(db *store.Store, m *config.Manager, d config.Deployment, executable str
 			db.FailUpload(id, "Task restoration is disabled")
 			os.RemoveAll(s.scratch(id))
 		}
+	}
+	if err = s.startScheduler(); err != nil {
+		s.Close()
+		return nil, err
 	}
 	return s, nil
 }
@@ -380,24 +385,10 @@ func (s *Service) validate(id string) error {
 	if err = os.RemoveAll(scratch); err != nil {
 		slog.Warn("Upload temporary cleanup failed", "image", id, "error", err)
 	}
+	if image.State == "queued" {
+		s.signalConversion()
+	}
 	return nil
-}
-func (s *Service) PublicSVG(id string) (string, error) {
-	if !validID(id) {
-		return "", os.ErrNotExist
-	}
-	image, err := s.DB.Image(id)
-	if err != nil {
-		return "", err
-	}
-	if image.State != "completed" || image.Format != "svg" || len(image.Hash) != 64 {
-		return "", os.ErrNotExist
-	}
-	var status string
-	if err = s.DB.DB.QueryRow("SELECT status FROM users WHERE id=?", image.UserID).Scan(&status); err != nil || status == "deleted" {
-		return "", os.ErrNotExist
-	}
-	return filepath.Join(s.objectDir(), image.Hash), nil
 }
 func IsCapacity(err error) bool {
 	return errors.Is(err, store.ErrCapacity) || errors.Is(err, store.ErrQuota)

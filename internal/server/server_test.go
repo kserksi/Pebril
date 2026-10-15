@@ -31,7 +31,7 @@ func TestStatusHealthAndAssets(t *testing.T) {
 		if r.Code != 200 || r.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal(path, r.Code)
 		}
-		if path == "/api/v1/status" && (strings.Contains(r.Body.String(), d.Root) || !strings.Contains(r.Body.String(), "uploads")) {
+		if path == "/api/v1/status" && (strings.Contains(r.Body.String(), d.Root) || !strings.Contains(r.Body.String(), "conversion")) {
 			t.Fatal("Status exposed paths or reported the wrong stage")
 		}
 	}

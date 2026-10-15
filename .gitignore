@@ -47,6 +47,7 @@ go.work.sum
 *.db-wal
 
 internal/nativeassets/runtime_native.gz
+internal/nativeassets/runtime_worker.gz
 
 /docs/archive/
 .env.*

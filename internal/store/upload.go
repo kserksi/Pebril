@@ -22,19 +22,27 @@ type User struct {
 	Used     int64  `json:"used"`
 }
 type Image struct {
-	ID      string          `json:"id"`
-	UserID  int64           `json:"-"`
-	State   string          `json:"state"`
-	Format  string          `json:"format,omitempty"`
-	Bytes   int64           `json:"bytes"`
-	Width   int             `json:"width,omitempty"`
-	Height  int             `json:"height,omitempty"`
-	Frames  int             `json:"frames,omitempty"`
-	Created int64           `json:"created_at"`
-	URL     string          `json:"url,omitempty"`
-	Error   string          `json:"error,omitempty"`
-	Hash    string          `json:"-"`
-	Policy  config.Snapshot `json:"-"`
+	ID         string          `json:"id"`
+	UserID     int64           `json:"-"`
+	State      string          `json:"state"`
+	Format     string          `json:"format,omitempty"`
+	Bytes      int64           `json:"bytes"`
+	Width      int             `json:"width,omitempty"`
+	Height     int             `json:"height,omitempty"`
+	Frames     int             `json:"frames,omitempty"`
+	Created    int64           `json:"created_at"`
+	URL        string          `json:"url,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Hash       string          `json:"-"`
+	Generation int64           `json:"-"`
+	Attempts   int             `json:"attempts,omitempty"`
+	NextRun    int64           `json:"next_retry_at,omitempty"`
+	Files      []ImageFile     `json:"-"`
+	Retryable  bool            `json:"retryable,omitempty"`
+	Temporary  bool            `json:"temporary,omitempty"`
+	CoverURL   string          `json:"cover_url,omitempty"`
+	TotalBytes int64           `json:"storage_bytes"`
+	Policy     config.Snapshot `json:"-"`
 }
 
 func (s *Store) AcceptUpload(id string, user int64, policy config.Snapshot) error {
@@ -59,7 +67,7 @@ func (s *Store) AcceptUpload(id string, user int64, policy config.Snapshot) erro
 		return ErrQuota
 	}
 	var own, total int
-	if err = tx.QueryRow("SELECT COALESCE(SUM(user_id=?),0),count(*) FROM images WHERE state IN ('receiving','received','queued')", user).Scan(&own, &total); err != nil {
+	if err = tx.QueryRow("SELECT COALESCE(SUM(user_id=?),0),count(*) FROM images WHERE state IN ('receiving','received','queued','processing','retry_wait')", user).Scan(&own, &total); err != nil {
 		return err
 	}
 	if own >= 10 || total >= 10000 {
@@ -96,6 +104,14 @@ func (s *Store) SaveUpload(image Image) error {
 	if n != 1 {
 		return errors.New("Upload is no longer eligible for persistence")
 	}
+	role := "original"
+	if image.Format == "svg" {
+		role = "result"
+	}
+	_, err = tx.Exec("INSERT INTO image_files(image_id,role,hash,bytes,format,width,height,frames) VALUES(?,?,?,?,?,?,?,?)", image.ID, role, image.Hash, image.Bytes, image.Format, image.Width, image.Height, image.Frames)
+	if err != nil {
+		return err
+	}
 	_, err = tx.Exec("UPDATE users SET used=used+? WHERE id=(SELECT user_id FROM images WHERE id=?)", image.Bytes, image.ID)
 	if err != nil {
 		return err
@@ -105,12 +121,25 @@ func (s *Store) SaveUpload(image Image) error {
 func (s *Store) Image(id string) (Image, error) {
 	var i Image
 	var policy []byte
-	err := s.DB.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy)
+	err := s.DB.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary)
 	if err != nil {
 		return i, err
 	}
 	err = json.Unmarshal(policy, &i.Policy)
-	if i.State == "completed" && i.Format == "svg" {
+	files, e := s.Files(id)
+	if e != nil {
+		return i, e
+	}
+	i.Files = files
+	i.Retryable = i.State == "failed" && FileRole(files, "original").Hash != ""
+	i.TotalBytes = LogicalBytes(files)
+	i.Temporary = i.State != "completed" && i.Temporary && i.Policy.Policy.OriginalFallback && FileRole(files, "original").Hash != ""
+	for _, f := range files {
+		if f.Role == "cover" {
+			i.CoverURL = "/image/" + i.ID + "/cover"
+		}
+	}
+	if i.State == "completed" || i.Temporary {
 		i.URL = "/image/" + i.ID
 	}
 	return i, err
@@ -138,6 +167,6 @@ func (s *Store) User(id int64) (User, error) {
 }
 func (s *Store) ObjectReferenced(hash string) bool {
 	var n int
-	err := s.DB.QueryRow("SELECT count(*) FROM images WHERE hash=?", hash).Scan(&n)
+	err := s.DB.QueryRow("SELECT (SELECT count(*) FROM images WHERE hash=?)+(SELECT count(*) FROM image_files WHERE hash=?)", hash, hash).Scan(&n)
 	return err != nil || n > 0
 }

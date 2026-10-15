@@ -11,7 +11,14 @@ import (
 )
 
 func Ensure(dir string) error {
-	compressed := Bytes()
+	return restore(dir, "libpebril_native.so", Bytes(), 8*1024*1024, 0600)
+}
+
+func EnsureWorker(dir string) error {
+	return restore(dir, "pebril-image-worker", WorkerBytes(), 32*1024*1024, 0700)
+}
+
+func restore(dir, name string, compressed []byte, maximum int64, mode os.FileMode) error {
 	if len(compressed) == 0 {
 		return nil
 	}
@@ -20,15 +27,15 @@ func Ensure(dir string) error {
 		return e
 	}
 	defer reader.Close()
-	data, e := io.ReadAll(io.LimitReader(reader, 8*1024*1024+1))
+	data, e := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if e != nil {
 		return e
 	}
-	if len(data) > 8*1024*1024 {
-		return errors.New("Internal native library exceeds 8MiB")
+	if int64(len(data)) > maximum {
+		return errors.New("Embedded component exceeds its size limit")
 	}
-	destination := filepath.Join(dir, "libpebril_native.so")
-	if info, e := os.Lstat(destination); e == nil && info.Mode().IsRegular() && info.Size() == int64(len(data)) {
+	destination := filepath.Join(dir, name)
+	if info, e := os.Lstat(destination); e == nil && info.Mode().IsRegular() && info.Size() == int64(len(data)) && info.Mode().Perm() == mode {
 		if current, e := os.ReadFile(destination); e == nil && sha256.Sum256(current) == sha256.Sum256(data) {
 			return nil
 		}
@@ -38,6 +45,10 @@ func Ensure(dir string) error {
 		return e
 	}
 	defer os.Remove(file.Name())
+	if e = file.Chmod(mode); e != nil {
+		file.Close()
+		return e
+	}
 	_, e = file.Write(data)
 	if e == nil {
 		e = file.Sync()
