@@ -89,6 +89,10 @@
   },
   "publication": {
     "release_tag": "native-libvips-8.16.1-r2",
-    "state": "approved-for-release"
+    "state": "published",
+    "release_id": 413631828,
+    "release_url": "https://github.com/kserksi/Pebril/releases/tag/native-libvips-8.16.1-r2",
+    "source_commit": "562412579c580714361ea766c67f7b8613c01217",
+    "published_at": "2026-10-15T09:35:07Z"
   }
 }
