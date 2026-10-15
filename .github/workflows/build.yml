@@ -1,0 +1,53 @@
+name: Build and test
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.build/cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.build/rustup
+      RUSTUP_TOOLCHAIN: 1.95.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.5'
+      - name: Prepare build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get -o DPkg::Lock::Timeout=60 --no-install-recommends -y install build-essential pkg-config bubblewrap
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - name: Build, test and package
+        run: bash scripts/build/ci.sh
+      - name: Upload checked package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pebril-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci/artifacts/*.tar.gz
+            .build/ci/artifacts/SHA256SUMS
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
