@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/kserksi/Pebril/internal/imageproc"
 	"github.com/kserksi/Pebril/internal/nativeassets"
 	"github.com/kserksi/Pebril/internal/nativeinstall"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -81,7 +81,40 @@ func hostCompatible() error {
 	return nil
 }
 
-// Run isolates local candidates, then validates managed installations; install only when no compatible library exists.
+// HostCompatible checks the supported private-package target before a download.
+func HostCompatible() error { return hostCompatible() }
+
+// Check validates the exact candidate in isolated native and worker processes.
+func Check(ctx context.Context, executable, dir, library string, avif bool) (Result, error) {
+	result, err := runChild(ctx, executable, dir, library, avif)
+	if err != nil {
+		return result, err
+	}
+	loaded, err := filepath.EvalSymlinks(result.VipsPath)
+	if err != nil || !filepath.IsAbs(loaded) {
+		return result, errors.New("Native probe did not report an absolute library path")
+	}
+	if filepath.IsAbs(library) {
+		expected, e := filepath.EvalSymlinks(library)
+		if e != nil || expected != loaded {
+			return result, errors.New("Native probe loaded an unexpected library")
+		}
+	}
+	if !atLeast(result.VipsVersion, "8.16.1") {
+		return result, errors.New("Compatible libvips >=8.16.1 is required")
+	}
+	_, version, err := imageproc.Prepare(ctx, dir, loaded)
+	if err != nil {
+		return result, err
+	}
+	if version != result.VipsVersion {
+		return result, errors.New("Native probe and worker reported different runtime versions")
+	}
+	result.VipsPath = loaded
+	return result, nil
+}
+
+// Run inspects existing candidates offline. Deployment repair belongs to pebril.sh.
 func Run(ctx context.Context, executable, dir string, avif bool) (Result, error) {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return Result{}, e
@@ -89,7 +122,15 @@ func Run(ctx context.Context, executable, dir string, avif bool) (Result, error)
 	if e := nativeassets.Ensure(dir); e != nil {
 		return Result{}, fmt.Errorf("Restore internal native library: %w", e)
 	}
+	if e := nativeassets.EnsureWorker(dir); e != nil {
+		return Result{}, fmt.Errorf("Restore internal conversion worker: %w", e)
+	}
 	candidates := []string{"/usr/lib/x86_64-linux-gnu/libvips.so.42", "/lib/x86_64-linux-gnu/libvips.so.42", "/usr/lib64/libvips.so.42", "/lib64/libvips.so.42", "/usr/local/lib/libvips.so.42", "libvips.so.42", filepath.Join(dir, "libvips.so.42")}
+	for _, artifact := range nativeinstall.Catalog() {
+		if library, err := nativeinstall.Active(dir, artifact); err == nil {
+			candidates = append(candidates, library)
+		}
+	}
 	seen := map[string]bool{}
 	var failures []string
 	var result Result
@@ -107,35 +148,14 @@ func Run(ctx context.Context, executable, dir string, avif bool) (Result, error)
 			}
 			seen[resolved] = true
 		}
-		candidate, e := runChild(ctx, executable, dir, library, avif)
+		candidate, e := Check(ctx, executable, dir, library, avif)
 		if e == nil {
 			return candidate, nil
 		}
 		result = candidate
 		failures = append(failures, fmt.Sprintf("%s: %s", library, e))
 	}
-	if e := hostCompatible(); e != nil {
-		return result, e
-	}
-	if _, e := os.Stat(filepath.Join(dir, "libpebril_native.so")); e != nil {
-		return result, fmt.Errorf("Internal project library is missing; use scripts/build.sh to build with library recovery: %w", e)
-	}
-	slog.Info("Checking managed runtime; downloading the pinned package if needed", "artifact", nativeinstall.Vips.ID)
-	_, e := nativeinstall.Ensure(ctx, dir, func(library string) error {
-		candidate, e := runChild(ctx, executable, dir, library, avif)
-		if e == nil {
-			result = candidate
-		}
-		return e
-	})
-	if e != nil {
-		result.Errors = append(failures, e.Error())
-		return result, fmt.Errorf("Core runtime installation failed; cancelling startup: %w", e)
-	}
-	// The installation moved from staging to its final directory; verify the actual load path again.
-	active, e := nativeinstall.Active(dir, nativeinstall.Vips)
-	if e != nil {
-		return result, e
-	}
-	return runChild(ctx, executable, dir, active, avif)
+	result.Ready = false
+	result.Errors = failures
+	return result, errors.New("Required runtime is unavailable; run pebril.sh to check and repair deployment dependencies")
 }

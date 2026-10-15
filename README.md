@@ -1,130 +1,114 @@
 # Pebril
 
+<p align="center"><strong><em>Peril — like a pebble in a river, giving your pictures a place to rest.</em></strong></p>
+
 **Early development. This prerelease is not ready for production use.**
 
 [Website](https://pebril.dev/) · [Releases](https://github.com/kserksi/Pebril/releases) · [Roadmap](https://github.com/kserksi/Pebril/issues?q=is%3Aissue%20label%3Aroadmap)
 
 ## What problem does Pebril address?
 
-Pebril is an open-source, self-hosted image hosting project for image-heavy blogs. A post may need many images with different dimensions, formats, and compression quality. Keeping those files organized, preparing suitable images for the web, and obtaining links for an article becomes a repeated workflow.
-
-The project grew from a blogger's search for an actively developed, open-source image host with modern format support. Its intended purpose is to bring image storage, web-oriented conversion, and sharing into one workflow, with processing speed and resource use treated as practical concerns for modest servers.
+Pebril is an open-source, self-hosted image hosting project for image-heavy blogs. Its intended purpose is to bring image storage, web-oriented conversion, and sharing into one workflow, with practical resource use on modest servers.
 
 ## Why consider Pebril?
 
-The reasons to follow or contribute to Pebril are its intended priorities:
+- **Self-hosting and ownership:** keep images under your control, with source available under MIT.
+- **A workflow for writing:** upload images, prepare web-friendly results, and copy URLs or Markdown image links.
+- **Modern image handling:** support common static and animated formats, with clear handling of originals and SVG safety.
 
-- **Self-hosting and ownership:** run the service under your control, with source available under MIT.
-- **A workflow for image-heavy writing:** manage batches of images and obtain links suitable for articles, including Markdown image syntax.
-- **Modern image handling:** prepare web-friendly output while providing clear policies for originals, animation, and supported formats.
-- **Resource awareness:** develop and measure the processing pipeline with limited server resources in mind.
-- **Visible project maturity:** distinguish implemented capabilities from plans and expose progress through development releases.
-
-These are the project's direction, not a claim that it already outperforms other image hosts. Pebril is currently suitable for evaluating its foundation and participating in development. A working production upload-and-share service is not available yet.
+The complete image host is still under development. Current releases are suitable for evaluation and contribution, with no published performance guarantee.
 
 ## How do management, conversion, and sharing fit together?
 
-They are three parts of the intended image workflow:
-
 | Part | Responsibility |
 |---|---|
-| Image management | Keep image records and files organized; manage ownership, storage usage, visibility, and deletion. |
-| Image conversion | Validate uploaded content and prepare suitable output formats; handle animation and SVG safety according to the supported rules. |
-| Online sharing | Make the selected result accessible through a link, with public or private access appropriate to the image. |
+| Image management | Organize records, ownership, files, and storage usage. |
+| Image conversion | Validate uploads and prepare suitable output formats. |
+| Online sharing | Provide links with the image's access rules. |
 
-In the planned workflow, an upload creates a managed image, processing prepares its deliverable content, and sharing exposes that content through the image's access rules. Keeping these parts together is intended to reduce manual file conversion, repeated uploading, and separate link management. This complete workflow is still under development.
+Conversion and public result links are available. Full gallery management and private sharing remain planned.
 
 ## What is available today?
 
-The current development release is **0.0.4-dev**. It adds raster conversion, public result links, animation covers and conversion retries to authenticated uploads. Sanitized SVG is shared without rasterization. The complete image host is still in development. Downloadable builds and their changes are listed in [Releases](https://github.com/kserksi/Pebril/releases).
+The current development release is **0.0.5-dev**. It adds independent startup checks and explicit consent for runtime downloads to the existing upload and conversion workflow.
 
 | Capability | Current status |
 |---|---|
-| Service startup, configuration validation, and runtime JSON hot reload | Available |
-| SQLite initialization and single-instance protection | Available; basic account and upload records are persisted |
-| Native runtime checks, verified library installation, and internal-library recovery | Available |
-| Static image conversion | PNG, JPEG, WebP and deployment-enabled AVIF output |
-| Rust GIF validation and SVG sanitation | Available for uploads and native self-tests |
-| Basic status page, readiness endpoint, and status API | Available |
-| Web administrator initialization, login/logout, and upload-only token issuance/revocation | Available |
-| Basic web/API image reception, validation, source-byte quota checks, and safe persistence | Available |
-| Sanitized SVG links | Available for completed SVG uploads |
-| Raster uploads | Converted asynchronously; completed results have public record URLs |
-| Ordinary registration, gallery management, and full account administration | Planned; unavailable |
-| Upload feedback and ordered link copying | Reception feedback, processing polling, failures, and URL/Markdown copying |
-| Animation and conversion retries | Animated WebP/GIF output, WebP covers, automatic and eligible manual retries |
-| Complete gallery and durable upload history | Planned; unavailable |
-| Private sharing and PicGo upload integration | Planned; unavailable |
-| Automatic resource-pressure handling and operational warnings | Planned; unavailable |
+| Configuration, JSON hot reload, SQLite, and readiness checks | Available |
+| Administrator initialization, login/logout, and upload-only tokens | Available |
+| Image reception, content validation, quota checks, and safe storage | Available |
+| Static conversion | PNG, JPEG, WebP, and deployment-enabled AVIF output |
+| Animation and SVG | Animated WebP/GIF, WebP covers, and sanitized SVG delivery |
+| Processing feedback and sharing | Status polling, retries, public results, and ordered URL/Markdown copying |
+| Runtime setup | Independent Bash launcher, consented downloads, offline reuse, and component recovery |
+| Registration, full account administration, gallery, and original downloads | Planned; unavailable |
+| Private sharing, PicGo integration, and resource-pressure controls | Planned; unavailable |
 
-Interfaces and configuration may change. Passing current checks does not establish production readiness or full image-processing acceptance.
+Official system-package installation remains pending. [Issue #20](https://github.com/kserksi/Pebril/issues/20) tracks the remaining deployment work.
 
 ## Where is the project heading?
 
-The image-conversion iteration is tracked in [Issue #6](https://github.com/kserksi/Pebril/issues/6). The next confirmed development iteration, `0.0.5-dev`, will improve runtime setup through an embedded startup script and explicit installation consent; it is tracked in [Issue #20](https://github.com/kserksi/Pebril/issues/20) and is not included in this release. Other unfinished plans have no new estimated completion dates; see the Roadmap for current status. Basic account access is available, while ordinary registration and administrator user management remain pending.
+The first complete version is intended to connect multi-user image management, modern-format processing, and public/private sharing. Linux binaries with local storage come first. Docker, S3-compatible storage, Cloudflare Workers, and optional Windows support remain later directions. See the Roadmap for progress; unfinished work has no new estimated completion dates.
 
-The first complete version is intended to provide a usable self-hosted image backend, basic APIs, and a simple upload and management website. The planned core connects multi-user image management, modern-format processing, and public/private sharing. The initial deployment focus is a Linux binary with local storage.
-
-Later development may add a fuller administration interface, more storage and deployment options, stronger account protections, and a more refined frontend. Docker deployment, S3-compatible storage, Cloudflare Workers support, and optional Windows support remain later directions, not current capabilities.
-
-The long-term aim is an open-source image host that can support an image-heavy publishing workflow without requiring users to assemble separate management, conversion, and sharing services. Development will proceed incrementally; there is no fixed completion date or published performance guarantee. Development versions use `x.y.z-dev`, and the first stable release will be `1.0.0`.
+Development versions use `x.y.z-dev`. The first stable release will be `1.0.0`.
 
 ## Run
 
-Download the Linux x64 archive and SHA256SUMS from Releases. Verify the archive and extract it into an empty directory:
+Download the Linux x64 archive and `SHA256SUMS` from Releases. Verify and extract into an empty directory:
 
 ```bash
 sha256sum -c SHA256SUMS
 tar -xzf pebril-*-linux-amd64.tar.gz
 cd pebril-*-linux-amd64
-./pebril version
-./pebril check
-./pebril
+./pebril.sh version
+./pebril.sh --check
+./pebril.sh
 ```
 
-The default address is `127.0.0.1:8080`. `/` and `/login` display the basic account/upload page. `/healthz` reports readiness, and `/api/v1/status` returns status data.
+Run as an ordinary user. Root service startup is refused. The launcher reuses compatible installed libraries and asks before downloading missing runtimes. It tries a verified upstream package, then the Pebril-maintained fallback if needed. Failure stops startup.
 
-On a fresh deployment, initialize the unique administrator through the page, then sign in and select images. PNG, JPEG, GIF, WebP, and SVG are accepted when enabled; AVIF additionally requires deployment capability and its format switch. Content is verified after reception. Unsafe/corrupt/oversized files are rejected; SVG is sanitized before permanent storage. APNG is currently rejected.
+Noninteractive setup requires an explicit download grant for that invocation:
 
-Raster uploads are processed asynchronously. Defaults retain the original and produce WebP at the original dimensions with quality 80. Animated inputs remain animated and receive a separate WebP cover. SVG is sanitized and served without rasterization. Configured dimensions fit within the requested box without cropping or enlargement; transparent JPEG output uses a white background. Full gallery and original-download workflows remain unavailable.
+```bash
+./pebril.sh --allow-downloads --check
+```
 
-Issue or revoke an upload-only token on the page. The basic API uses `POST /api/v1/uploads`, a single multipart field named `file`, and an `Authorization: Bearer <token>` header. A completed upload returns HTTP201 and a relative `url`; a processing receipt returns HTTP202. Sign in with an owner session to poll `GET /api/v1/uploads/:id`; upload-only tokens cannot query status or retry conversions. Resolve relative links against your service address. This is not yet a PicGo-compatible final-result workflow. On conversion failure, the page shows the error and a temporary original link when permitted. Eligible manual retry uses the owner session and CSRF-protected `POST /api/v1/uploads/:id/retry`. Originals are otherwise internal; temporary links switch to the result when conversion succeeds. Do not put credentials in URLs.
+This checks dependencies without starting the service. Consent is not saved. Direct `./pebril check` checks configuration and existing libraries offline; it does not download them.
 
-Passwords are hashed with bcrypt; web sessions expire after seven days. Login cookies use HttpOnly and SameSite=Strict, with Secure for HTTPS. Web writes require same-origin requests and a CSRF token. Deploy external access behind HTTPS. The application ships no default account or password; ordinary web registration and full account management are not implemented yet.
+The package requires Linux x64, glibc >=2.34, compatible system C/C++ runtimes, Bash, coreutils, and flock. Downloaded runtimes also require SSSE3, SSE4.1, SSE4.2, and POPCNT. Downloads need HTTPS access, trusted CA certificates, and a library directory owned by the service user and not writable by others. Deployment requires no compilers; valid runtimes can be reused offline.
 
-Paths are resolved relative to the executable. Missing configuration generates `config.json`; application data uses `data/`, and native libraries use `bin/`. Copy `.env.example` to `.env` to customize deployment settings. Deployment changes require a restart. Valid runtime JSON changes apply automatically; invalid changes retain the previous configuration.
+The default address is `127.0.0.1:8080`. `/` and `/login` show the basic account/upload page; `/healthz` and `/api/v1/status` provide service status. On first deployment, initialize the administrator, sign in, and select images. No default account or password is supplied.
 
-`check` validates configuration and native capabilities without opening the application database. It may restore or download missing native libraries. Initial setup requires HTTPS access, trusted CA certificates, and a writable native-library directory. A failed core check prevents service startup.
+PNG, JPEG, GIF, WebP, and SVG uploads are supported when enabled. AVIF requires deployment capability and its format switch; APNG is rejected. Raster uploads convert asynchronously to WebP at original dimensions and quality 80 by default. Originals are retained, animation receives a separate cover, and SVG is sanitized without rasterization. Configured resizing preserves aspect ratio without enlargement. Transparent JPEG output uses white.
 
-The supplied binary requires Linux x64, glibc 2.34 or newer, and the system C/C++ runtimes. The automatically installed runtime requires SSSE3, SSE4.1, SSE4.2, and POPCNT CPU support. Valid installed libraries can be reused offline.
+Upload-only tokens use `POST /api/v1/uploads` with a multipart `file` field and `Authorization: Bearer <token>`. HTTP201 indicates completion; HTTP202 is a processing receipt. Owner sessions can poll `GET /api/v1/uploads/:id`; upload tokens cannot query or retry tasks. This is not yet a PicGo-compatible workflow. The page shows processing failures and eligible temporary links or manual retries.
+
+Deploy external access behind HTTPS. Web sessions use protected cookies; web writes require same-origin requests and CSRF protection. Never put credentials in URLs.
+
+Paths resolve relative to the executable. Copy `.env.example` to `.env` for deployment settings, which require restart. Missing runtime configuration generates `config.json`; valid JSON changes apply automatically, and invalid changes retain the last valid configuration. Data uses `data/`, and native libraries use `bin/`.
+
+For upgrades, stop the service, back up configuration and data, and deploy into a new directory while preserving configured data paths. Do not replace live configuration with examples.
 
 ## Build and checks
 
-With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development headers/libraries, Python, and ELF inspection tools available, run `./scripts/build.sh`. Build output is placed in `dist/`. Dependency versions are fixed in go.mod/go.sum and native/Cargo.lock. Deployment does not require build tools.
+With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies.
 
-Applicable checks include Go build/vet/test, Rust tests, script syntax checks, and `python3 tests/integration/test_server.py`. Optional compatibility checks use `scripts/fetch_compatibility_images.py` and `tests/compatibility/test_runtime.py`. `node tests/web/test_uploads.mjs` checks the plain JavaScript workflow without frontend dependencies. `python3 tests/integration/test_uploads.py` also checks image reception and permission boundaries, using generated fixture credentials by default. Tests do not require hardcoded accounts. `python3 tests/integration/test_conversion.py` covers actual conversion outputs, metadata, animation, retries and recovery. Use `nomsgpack,image_worker` build tags for full Go vet/test checks and provide the worker native build prerequisites. These checks cover the current modules; full product and resource-pressure acceptance is incomplete.
+Checks cover Go build/vet/race with `nomsgpack,image_worker` tags, Rust, JavaScript logic, uploads/conversion, and bootstrap behavior. Integration scripts are in `tests/integration/`; pinned Linux userspace checks are in `tests/compatibility/`. Bootstrap tests use explicit helper doubles for authorization paths. Debian 12, Ubuntu 22.04, and Rocky Linux 9.8 userspace checks share one kernel; they do not establish independent-machine compatibility. Real privileged installation and full-product acceptance remain open.
 
 ## Repository layout
 
 | Directory | Contents |
 |---|---|
-| `cmd/pebril/` | Main service entry point |
-| `cmd/pebril-image-worker/` | Project-owned isolated conversion worker |
-| `internal/` | Private Go implementation and unit tests |
-| `native/` | Internal Rust library and lockfile |
-| `configs/` | Deployment and runtime configuration examples |
-| `scripts/` | Build entry point and test preparation tools |
-| `tests/integration/` | Service integration checks |
-| `tests/compatibility/` | Runtime compatibility checks and pinned inputs |
-| `tests/web/` | Plain JavaScript workflow checks |
-| `third-party/` | Dependency provenance and license metadata |
-
-The build copies configuration examples into `dist/` for deployment.
+| `cmd/` | Service, conversion worker, and deployment utility |
+| `internal/` | Private Go packages, tests, and basic web page |
+| `native/` | Rust library and lockfile |
+| `configs/` | Deployment examples |
+| `scripts/` | Build, deployment, and test preparation |
+| `tests/` | Integration, compatibility, and web checks |
+| `third-party/` | Dependency provenance and notices |
 
 ## Feedback and licensing
 
-Report reproducible problems through repository issues. Do not include credentials, actual configuration, databases, or user data. Report security problems privately when private vulnerability reporting is available.
-
-Development releases are marked as prereleases.
+Report reproducible problems through repository issues without credentials, actual configuration, databases, or user data. Report security problems privately when private vulnerability reporting is available.
 
 Pebril is licensed under [MIT](LICENSE). Third-party components retain their own licenses, and required notices accompany distributed code.

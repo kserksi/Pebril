@@ -8,6 +8,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = Path(os.environ.get('PEBRIL_BUILD_OUTPUT', str(ROOT / 'dist')))
 
 def licenses(directory, destination):
     count = 0
@@ -23,9 +24,9 @@ def licenses(directory, destination):
         raise RuntimeError(f'License not found: {directory}')
 
 def main():
-    target = ROOT / 'dist/third-party'
+    target = OUTPUT / 'third-party'
     target.mkdir(parents=True, exist_ok=True)
-    raw = subprocess.check_output(['go', 'list', '-tags', 'nomsgpack,image_worker', '-deps', '-json', './cmd/pebril', './cmd/pebril-image-worker'], cwd=ROOT).decode()
+    raw = subprocess.check_output(['go', 'list', '-tags', 'nomsgpack,image_worker,bundled_native', '-deps', '-json', './cmd/pebril', './cmd/pebril-image-worker', './cmd/pebril-runtime'], cwd=ROOT).decode()
     decoder = json.JSONDecoder()
     modules = {}
     while raw.strip():
@@ -41,7 +42,7 @@ def main():
             source=(Path(module['Dir'])/'vips/icc_profiles.go').read_text()
             profiles=re.findall(r'(\w+ICCProfile)\s*=\s*\[\]byte\{(.*?)\n\s*\}',source,re.S)
             if not profiles: raise RuntimeError('Review changed govips embedded-profile inventory')
-            worker=(ROOT/'dist/bin/pebril-image-worker').read_bytes()
+            worker=(OUTPUT/'bin/pebril-image-worker').read_bytes()
             for profile,body in profiles:
                 payload=bytes(int(value,16) for value in re.findall(r'0x([0-9a-fA-F]+)',body))
                 if payload in worker: raise RuntimeError(f'Unreviewed additional govips ICC profile linked: {profile}')
@@ -62,12 +63,13 @@ def main():
         inventory.append(dict(ecosystem='rust', name=package['name'], version=package['version'], license=package['license'], checksum_in='native/Cargo.lock'))
     goroot = Path(subprocess.check_output(['go', 'env', 'GOROOT']).decode().strip())
     licenses(goroot, target / 'go-standard-library')
-    payload = dict(scope='Actual main/worker Go runtime modules and Rust lockfile packages; see native/native-manifest.json for the native runtime.', review='Pinned declarations and original texts collected; see native/dependency-licenses.json for the quick-error exception and native/native-manifest.json for runtime scope. Full product release review remains separate.', packages=inventory)
+    payload = dict(scope='Actual main/worker/deployment-helper Go runtime modules and Rust lockfile packages; see native/native-manifest.json for the native runtime.', review='Pinned declarations and original texts collected; see native/dependency-licenses.json for the quick-error exception and native/native-manifest.json for runtime scope. Full product release review remains separate.', packages=inventory)
     native_target = target / 'native'
     native_target.mkdir(exist_ok=True)
-    for file in (ROOT / 'third-party').iterdir():
+    for file in (ROOT / 'third-party').rglob('*'):
         if file.is_file():
-            output = native_target / file.name
+            output = native_target / file.relative_to(ROOT / 'third-party')
+            output.parent.mkdir(parents=True, exist_ok=True)
             if output.exists():
                 output.unlink()
             shutil.copy2(file, output)

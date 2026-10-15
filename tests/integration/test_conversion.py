@@ -16,7 +16,7 @@ import tempfile
 import time
 import urllib.request
 import zlib
-from test_uploads import Client, ROOT, raster_fixtures, wait_image
+from test_uploads import Client, ROOT, OUTPUT, raster_fixtures, wait_image
 
 
 def chunk(kind, value):
@@ -111,7 +111,9 @@ def main():
     credentials=json.load(__import__('sys').stdin) if args.credentials_stdin else {'admin_user':secrets.token_hex(8),'admin_password':secrets.token_urlsafe(24),'user':secrets.token_hex(8),'password':secrets.token_urlsafe(24)}
     with tempfile.TemporaryDirectory(prefix='conversion-integration-',dir=ROOT/'.build') as temporary:
         root=Path(temporary);executable=root/'pebril'
-        shutil.copy2(ROOT/'dist/pebril',executable);shutil.copytree(ROOT/'dist/bin',root/'bin',symlinks=True)
+        shutil.copy2(OUTPUT/'pebril',executable);shutil.copytree(OUTPUT/'bin',root/'bin',symlinks=True)
+        if runtime := os.environ.get('PEBRIL_TEST_RUNTIME'):
+            shutil.copy2(runtime, root / 'bin/libvips.so.42')
         data=args.data_dir.resolve() if args.data_dir else root/'data'
         database=data/'db/pebril.db'
         def clean():

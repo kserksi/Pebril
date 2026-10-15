@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/kserksi/Pebril/internal/nativeassets"
-	"github.com/kserksi/Pebril/internal/nativeinstall"
 )
 
 type outputBuffer struct {
@@ -37,6 +36,7 @@ func invoke(ctx context.Context, worker, library, directory string, args []strin
 	command.Stdin = bytes.NewReader(input)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
+	command.WaitDelay = time.Second
 	out, stderr := outputBuffer{cancel: cancel}, outputBuffer{cancel: cancel}
 	command.Stdout = &out
 	command.Stderr = &stderr
@@ -82,15 +82,10 @@ func Prepare(ctx context.Context, native, library string) (string, string, error
 		version = result.Version
 		return nil
 	}
-	if err := check(library); err == nil {
-		return library, version, nil
+	if err := check(library); err != nil {
+		return "", "", errors.New("Required conversion worker or runtime is unavailable; run pebril.sh to check and repair deployment dependencies")
 	}
-	// A system candidate may pass the initial probes but lack the worker's ABI.
-	installed, err := nativeinstall.Ensure(ctx, native, check)
-	if err != nil {
-		return "", "", errors.New("Required conversion worker or runtime is unavailable")
-	}
-	return installed, version, nil
+	return library, version, nil
 }
 func Convert(ctx context.Context, worker, library string, request Request) (Result, error) {
 	data, err := json.Marshal(request)

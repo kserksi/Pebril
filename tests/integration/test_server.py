@@ -11,6 +11,8 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = Path(os.environ.get('PEBRIL_TEST_OUTPUT', str(ROOT / 'dist')))
+
 
 def wait_status(port, process):
     deadline = time.monotonic() + 8
@@ -30,8 +32,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='integration-', dir=ROOT / '.build') as temporary:
         root = Path(temporary)
         executable = root / 'pebril'
-        shutil.copy2(ROOT / 'dist/pebril', executable)
-        shutil.copytree(ROOT / 'dist/bin', root / 'bin', symlinks=True)
+        shutil.copy2(OUTPUT / 'pebril', executable)
+        shutil.copytree(OUTPUT / 'bin', root / 'bin', symlinks=True)
+        if runtime := os.environ.get('PEBRIL_TEST_RUNTIME'):
+            shutil.copy2(runtime, root / 'bin/libvips.so.42')
         # Start from another working directory to verify paths remain relative to the executable.
         env = {k: v for k, v in os.environ.items() if not k.startswith('PEBRIL_')}
         assert subprocess.check_output([str(executable), 'version'], env=env, cwd='/').decode().strip() == (ROOT / 'VERSION').read_text().strip()

@@ -20,6 +20,8 @@ import urllib.request
 import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = Path(os.environ.get('PEBRIL_TEST_OUTPUT', str(ROOT / 'dist')))
+
 
 def png():
     def chunk(kind, data):
@@ -106,8 +108,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='upload-integration-', dir=ROOT / '.build') as temporary:
         root = Path(temporary)
         executable = root / 'pebril'
-        shutil.copy2(ROOT / 'dist/pebril', executable)
-        shutil.copytree(ROOT / 'dist/bin', root / 'bin', symlinks=True)
+        shutil.copy2(OUTPUT / 'pebril', executable)
+        shutil.copytree(OUTPUT / 'bin', root / 'bin', symlinks=True)
+        if runtime := os.environ.get('PEBRIL_TEST_RUNTIME'):
+            shutil.copy2(runtime, root / 'bin/libvips.so.42')
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
         data = args.data_dir.resolve() if args.data_dir else root / 'data'

@@ -92,8 +92,10 @@ func client() *http.Client {
 		}
 	}}
 }
-func Ensure(ctx context.Context, dir string, verify func(string) error) (string, error) {
-	return install(ctx, dir, Vips, client(), verify)
+
+// Install is called by the independent deployment helper after Bash obtains consent.
+func Install(ctx context.Context, dir string, artifact Artifact, verify func(string) error) (string, error) {
+	return install(ctx, dir, artifact, client(), verify)
 }
 
 func install(ctx context.Context, dir string, artifact Artifact, httpClient *http.Client, verify func(string) error) (string, error) {
@@ -146,7 +148,7 @@ func install(ctx context.Context, dir string, artifact Artifact, httpClient *htt
 	if e = download(ctx, httpClient, artifact, archive); e != nil {
 		return "", e
 	}
-	if e = extract(archive, stage, artifact.Members); e != nil {
+	if e = extract(archive, stage, artifact.Members, artifact.NoticesPrefix); e != nil {
 		return "", e
 	}
 	if e = os.Remove(archive); e != nil {
@@ -169,20 +171,18 @@ func install(ctx context.Context, dir string, artifact Artifact, httpClient *htt
 	if e = os.WriteFile(filepath.Join(stage, "receipt.json"), data, 0600); e != nil {
 		return "", e
 	}
-	files, e := os.ReadDir(stage)
-	if e != nil {
+	if e = filepath.WalkDir(stage, func(name string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		f, err := os.Open(name)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return f.Sync()
+	}); e != nil {
 		return "", e
-	}
-	for _, file := range files {
-		f, e := os.Open(filepath.Join(stage, file.Name()))
-		if e != nil {
-			return "", e
-		}
-		e = f.Sync()
-		f.Close()
-		if e != nil {
-			return "", e
-		}
 	}
 	current := filepath.Join(dir, currentName)
 	if info, e := os.Lstat(current); e == nil && info.Mode()&os.ModeSymlink == 0 {
@@ -211,6 +211,13 @@ func install(ctx context.Context, dir string, artifact Artifact, httpClient *htt
 			os.RemoveAll(destination)
 		}
 	}()
+	// Verify the generation at its final load path before selecting it.
+	if e = verify(filepath.Join(destination, "libvips.so.42")); e != nil {
+		return "", fmt.Errorf("Installed runtime failed final-path verification: %w", e)
+	}
+	if e = ctx.Err(); e != nil {
+		return "", e
+	}
 	temporary := filepath.Join(dir, ".pebril-current-"+generation)
 	if e = os.Symlink(generation, temporary); e != nil {
 		return "", e
@@ -275,7 +282,7 @@ func download(ctx context.Context, client *http.Client, artifact Artifact, desti
 	}
 	return file.Sync()
 }
-func extract(archive, directory string, members map[string]string) error {
+func extract(archive, directory string, members map[string]string, noticesPrefixes ...string) error {
 	file, e := os.Open(archive)
 	if e != nil {
 		return e
@@ -312,6 +319,12 @@ func extract(archive, directory string, members map[string]string) error {
 		}
 		size += header.Size
 		target, selected := members[clean]
+		// Keep the reviewed archive's complete license subtree, without extracting tools or libraries.
+		for _, prefix := range noticesPrefixes {
+			if !selected && prefix != "" && strings.HasPrefix(clean, prefix) && header.Typeflag != tar.TypeDir {
+				target, selected = "licenses/"+strings.TrimPrefix(clean, prefix), true
+			}
+		}
 		if !selected {
 			continue
 		}
@@ -319,8 +332,11 @@ func extract(archive, directory string, members map[string]string) error {
 			return errors.New("Runtime entry is duplicated or is not a regular file")
 		}
 		seen[clean] = true
-		if filepath.Base(target) != target || target == "." || target == ".." {
+		if !filepath.IsLocal(target) || filepath.Clean(target) != target {
 			return errors.New("Invalid installation manifest path")
+		}
+		if e = os.MkdirAll(filepath.Dir(filepath.Join(directory, target)), 0700); e != nil {
+			return e
 		}
 		output, e := os.OpenFile(filepath.Join(directory, target), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e != nil {

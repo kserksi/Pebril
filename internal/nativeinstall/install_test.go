@@ -270,3 +270,95 @@ func TestCancellationBeforePublication(t *testing.T) {
 	}
 	assertNoStage(t, dir)
 }
+
+func TestNestedNoticesAndManifestPathValidation(t *testing.T) {
+	data := pack(t, []struct {
+		name, body string
+		kind       byte
+	}{
+		{"runtime/lib/libvips.so.42", "library", tar.TypeReg},
+		{"runtime/licenses/subcomponent/LICENSE", "license", tar.TypeReg},
+		{"runtime/DISTRIBUTION-NOTICE.txt", "source companion notice", tar.TypeReg},
+	})
+	directory := t.TempDir()
+	archive := filepath.Join(directory, "runtime.tar.gz")
+	if err := os.WriteFile(archive, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	members := map[string]string{
+		"runtime/lib/libvips.so.42": "libvips.so.42",
+
+		"runtime/DISTRIBUTION-NOTICE.txt": "DISTRIBUTION-NOTICE.txt",
+	}
+	if err := extract(archive, directory, members, "runtime/licenses/"); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(directory, "licenses/subcomponent/LICENSE")); err != nil || string(body) != "license" {
+		t.Fatal("Nested notice was not retained", err)
+	}
+	for _, target := range []string{"../escape", "/absolute", "licenses/../escape"} {
+		if err := extract(archive, t.TempDir(), map[string]string{"runtime/lib/libvips.so.42": target}); err == nil {
+			t.Fatal("Invalid manifest destination accepted", target)
+		}
+	}
+}
+
+func TestLicenseSubtreeRejectsSymlinks(t *testing.T) {
+	data := pack(t, []struct {
+		name, body string
+		kind       byte
+	}{{"runtime/licenses/linked", "", tar.TypeSymlink}})
+	directory := t.TempDir()
+	archive := filepath.Join(directory, "runtime.tar.gz")
+	if err := os.WriteFile(archive, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := extract(archive, directory, nil, "runtime/licenses/"); err == nil {
+		t.Fatal("License subtree symlink accepted")
+	}
+}
+
+func TestPebrilCatalogRetainsSourceAndLicenseMaterials(t *testing.T) {
+	prefix := PebrilVips.ID + "/"
+	for _, member := range []string{"DISTRIBUTION-NOTICE.txt", "PACKAGING-LICENSE.txt", "runtime-manifest.json", "README.txt", "versions.json", "THIRD-PARTY-NOTICES.md", "files.sha256", "licenses/MPL-2.0.txt"} {
+		if PebrilVips.Members[prefix+member] != member {
+			t.Fatal("Required source/notice material is missing", member)
+		}
+	}
+	if PebrilVips.LibrarySHA256 != "65e2e1b0eeec6fd120eb9a3fcdf71c7cbe45742c3fb2de050fc73f864ee84e81" {
+		t.Fatal("Unreviewed r2 library")
+	}
+	if _, ok := Source("https://example.com/arbitrary"); ok {
+		t.Fatal("Arbitrary source accepted")
+	}
+}
+
+func TestFinalPathFailurePreservesPreviousRuntime(t *testing.T) {
+	data, artifact := fixture(t, "valid")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(data) }))
+	defer server.Close()
+	artifact.URL = server.URL
+	directory := t.TempDir()
+	_, err := install(context.Background(), directory, artifact, server.Client(), func(library string) error {
+		if strings.HasPrefix(filepath.Base(filepath.Dir(library)), "pebril-vips-") {
+			return errors.New("Final path rejected")
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("Final-path validation failure was accepted")
+	}
+	if _, err = os.Lstat(filepath.Join(directory, currentName)); !os.IsNotExist(err) {
+		t.Fatal("Invalid runtime was selected")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "pebril-vips-") {
+			t.Fatal("Invalid generation was retained")
+		}
+	}
+	assertNoStage(t, directory)
+}

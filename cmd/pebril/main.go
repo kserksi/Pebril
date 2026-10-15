@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-var version = "0.0.4-dev"
+var version = "0.0.5-dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -33,6 +33,9 @@ func main() {
 }
 func run() error {
 	args := os.Args[1:]
+	if os.Geteuid() == 0 && !(len(args) == 1 && args[0] == "version") {
+		return errors.New("Run Pebril as an unprivileged user; use pebril.sh for dependency setup")
+	}
 	if len(args) > 0 && args[0] == "_native-probe" {
 		if len(args) != 5 {
 			return errors.New("Invalid self-test arguments")
