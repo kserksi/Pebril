@@ -89,6 +89,6 @@
   },
   "publication": {
     "release_tag": "native-libvips-8.16.1-r2",
-    "state": "awaiting-public-text-approval"
+    "state": "approved-for-release"
   }
 }
