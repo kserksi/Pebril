@@ -34,6 +34,101 @@ esac
 '''
 
 
+def system_candidate_rejections(app, env):
+    """Isolate OS/package metadata and sudo doubles; never install host packages."""
+    native = app / 'bin'
+    fixtures = app / 'system-fixtures'
+    fixtures.mkdir()
+    release = fixtures / 'os-release'
+    apt = fixtures / 'apt-cache'
+    dnf = fixtures / 'dnf'
+    sudo = fixtures / 'sudo'
+    sudo.write_text('#!/bin/bash\ntouch "' + str(native / 'sudo-called') + '"\nexit 99\n')
+    sudo.chmod(0o700)
+    real_bin = fixtures / 'real-bin'
+    test_bin = fixtures / 'test-bin'
+    real_bin.mkdir()
+    test_bin.mkdir()
+    for program in Path('/usr/bin').iterdir():
+        (test_bin / program.name).symlink_to(real_bin / program.name)
+    for name, fixture in [('apt-cache', apt), ('dnf', dnf), ('sudo', sudo)]:
+        (test_bin / name).unlink(missing_ok=True)
+        (test_bin / name).symlink_to(fixture)
+    base = ['bwrap', '--unshare-user', '--uid', '1000', '--gid', '1000', '--die-with-parent',
+            '--ro-bind', '/', '/', '--bind', str(app), str(app),
+            '--ro-bind', str(release), str(Path('/etc/os-release').resolve()),
+            '--ro-bind', '/usr/bin', str(real_bin), '--ro-bind', str(test_bin), '/usr/bin',
+            '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp']
+    cases = [
+        ('debian', 'none', 'No eligible reviewed system package'),
+        ('debian', 'old', 'libvips >=8.16.1 is required'),
+        ('debian', 'foreign', 'candidate origin is not an official repository'),
+        ('debian', 'architecture', 'wrong architecture'),
+        ('debian', 'gpl', 'unapproved GPL runtime dependencies'),
+        ('debian', 'unknown', 'no reviewed dependency/license profile'),
+        ('ubuntu', 'gpl', 'unapproved GPL runtime dependencies'),
+        ('ubuntu', 'unknown', 'no reviewed dependency/license profile'),
+        ('rocky', 'none', 'No cached official Rocky runtime candidate'),
+        ('rocky', 'old', 'libvips >=8.16.1 is required'),
+        ('rocky', 'gpl', 'unapproved GPL runtime dependencies'),
+        ('rocky', 'unknown', 'no reviewed dependency/license profile'),
+    ]
+    for distro, candidate, diagnostic in cases:
+        version = '8.15.0-1' if candidate == 'old' else '8.16.1-1'
+        origin = 'Ubuntu' if distro == 'ubuntu' else 'Debian'
+        repo = 'https://official.invalid/repository stable/main amd64 Packages'
+        source = repo.replace('official.invalid', 'foreign.invalid') if candidate == 'foreign' else repo
+        arch = 'arm64' if candidate == 'architecture' else 'amd64'
+        dependencies = 'libpoppler-glib8t64, libfftw3-double3' if candidate == 'gpl' else 'libc6'
+        os_version = {'debian': '13', 'ubuntu': '26.04', 'rocky': '9.8'}[distro]
+        release.write_text(f'ID={distro}\nVERSION_ID="{os_version}"\n')
+        apt.write_text(f"""#!/bin/bash
+case "$1:${{2-}}" in
+ policy:) cat <<'POLICY'
+ 500 {repo}
+     release o={origin},a=stable,n=stable,l={origin},c=main,b=amd64
+POLICY
+ ;;
+ policy:libvips42t64) cat <<'CANDIDATE'
+libvips42t64:
+  Candidate: {'(none)' if candidate == 'none' else version}
+  Version table:
+     {version} 500
+        500 {source}
+CANDIDATE
+ ;;
+ policy:libvips42) printf '  Candidate: (none)\\n' ;;
+ show:*) cat <<'METADATA'
+Package: libvips42t64
+Version: {version}
+Architecture: {arch}
+Depends: {dependencies}
+METADATA
+ ;;
+ *) exit 1 ;;
+esac
+""")
+        dnf.write_text('#!/bin/bash\nexit 1\n' if candidate == 'none' else
+                       f'#!/bin/bash\nprintf "%s\\n" "Version : {version.split("-")[0]}" "Requires : {dependencies}"\n')
+        apt.chmod(0o700)
+        dnf.chmod(0o700)
+        for grants in [[], ['--allow-system-install'], ['--allow-system-install', '--allow-downloads']]:
+            result = subprocess.run(base + [str(app / 'pebril.sh'), '--check', *grants], env=env,
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+            assert diagnostic in result.stderr, (distro, candidate, result.stderr)
+            assert not (native / 'sudo-called').exists(), 'Rejected package reached sudo'
+            if '--allow-downloads' in grants:
+                assert result.returncode == 0, result.stderr
+                assert (native / 'attempts').read_text().splitlines() == ['upstream', 'pebril']
+                (native / 'attempts').unlink()
+                (native / 'ready').unlink()
+            else:
+                assert result.returncode != 0 and 'not authorized' in result.stderr, result.stderr
+                assert not (native / 'attempts').exists(), 'System grant authorized a private download'
+            assert not (app / 'service-called').exists(), 'Rejected candidate started the service'
+    print('System-candidate rejection passed: 12 OS/metadata cases, sudo never reached, fallback needs a separate grant (metadata/helper doubles).')
+
+
 def main():
     (ROOT / '.build').mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='bootstrap-contract-', dir=ROOT / '.build') as temporary:
@@ -70,6 +165,8 @@ def main():
         result = run('--allow-downloads', extra={'MOCK_FAIL_ALL': 'yes'})
         assert result.returncode != 0 and 'All authorized runtime sources failed' in result.stderr
         (native / 'attempts').unlink()
+
+        system_candidate_rejections(app, env)
 
         # Interactive rejection/approval use a real terminal; EOF remains denial above.
         for answer, success in [(b'n\n', False), (b'y\n', True)]:
