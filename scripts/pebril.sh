@@ -58,11 +58,33 @@ settings_args=(settings "$root")
 if [[ "$command" == check ]]; then settings_args+=(--check); fi
 if $allow_low_memory; then settings_args+=(--allow-low-memory); fi
 settings_output=$(mktemp /tmp/pebril-settings.XXXXXXXX) || fail 'Cannot create a private settings-output file.'
-trap 'rm -f -- "$settings_output"' EXIT
-"$helper" "${settings_args[@]}" > "$settings_output" || fail 'Deployment preflight failed.'
+helper_pid=
+output=
+cleanup() {
+    rm -f -- "$settings_output"
+    if [[ -n "$output" ]]; then rm -f -- "$output"; fi
+}
+on_signal() {
+    local status=$1
+    trap '' INT TERM
+    if [[ -n "$helper_pid" ]]; then
+        kill -TERM "$helper_pid" 2>/dev/null || true
+        wait "$helper_pid" 2>/dev/null || true
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+# Keep terminal input for the prompt while wait allows signal forwarding/reaping.
+"$helper" "${settings_args[@]}" <&0 > "$settings_output" &
+helper_pid=$!
+settings_status=0
+wait "$helper_pid" || settings_status=$?
+helper_pid=
+((settings_status == 0)) || fail 'Deployment preflight failed.'
 while IFS= read -r -d '' value; do settings+=("$value"); done < "$settings_output"
 rm -f -- "$settings_output"
-trap - EXIT
 ((${#settings[@]} == 4)) || fail 'Deployment configuration could not be read.'
 native=${settings[0]}
 avif=${settings[1]}
@@ -80,20 +102,6 @@ native_mode=$(stat -c %a -- "$native")
 exec 9>"$native/.bootstrap.lock"
 flock -w 60 9 || fail 'Another bootstrap is active; try again after it finishes.'
 output=$(mktemp /tmp/pebril-bootstrap.XXXXXXXX) || fail 'Cannot create a private helper-output file.'
-helper_pid=
-cleanup() { rm -f -- "$output"; }
-on_signal() {
-    local status=$1
-    trap '' INT TERM
-    if [[ -n "$helper_pid" ]]; then
-        kill -TERM "$helper_pid" 2>/dev/null || true
-        wait "$helper_pid" 2>/dev/null || true
-    fi
-    exit "$status"
-}
-trap cleanup EXIT
-trap 'on_signal 130' INT
-trap 'on_signal 143' TERM
 run_helper() {
     local status=0
     : > "$output"

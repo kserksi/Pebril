@@ -259,7 +259,7 @@ def restricted_preflight_contract(env):
                 process.wait(timeout=2)
                 assert sent, content.decode(errors='replace')
                 if terminate:
-                    assert process.returncode != 0, 'Signal accepted startup'
+                    assert process.returncode == 143, 'Launcher did not handle SIGTERM and reap its preflight helper'
                     assert not Path(f'/proc/{helper_pid}').exists(), 'Cancelled preflight helper still running'
                     assert not settings_output.exists(), 'Cancelled preflight leaked settings output'
                     print(f'Preflight SIGTERM verified: launcher status {process.returncode}, helper gone, temp removed in {time.monotonic() - terminated_at:.3f}s.')
