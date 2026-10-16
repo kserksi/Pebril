@@ -30,7 +30,7 @@ Conversion and public result links are available. Full gallery management and pr
 
 ## What is available today?
 
-The current development release is **0.0.5-dev**. It adds independent startup checks and explicit consent for runtime downloads to the existing upload and conversion workflow.
+The `dev` branch is at **0.0.6-dev**, adding resource-aware processing and operational warnings. The latest published prerelease remains [0.0.5-dev](https://github.com/kserksi/Pebril/releases/tag/v0.0.5-dev).
 
 | Capability | Current status |
 |---|---|
@@ -42,7 +42,8 @@ The current development release is **0.0.5-dev**. It adds independent startup ch
 | Processing feedback and sharing | Status polling, retries, public results, and ordered URL/Markdown copying |
 | Runtime setup | Independent Bash launcher, consented downloads, offline reuse, and component recovery |
 | Registration, full account administration, gallery, and original downloads | Planned; unavailable |
-| Private sharing, PicGo integration, and resource-pressure controls | Planned; unavailable |
+| Resource controls | Memory-based concurrency, restricted startup, and administrator warnings |
+| Private sharing and PicGo integration | Planned; unavailable |
 
 Official system-package installation remains pending. [Issue #20](https://github.com/kserksi/Pebril/issues/20) tracks the remaining deployment work.
 
@@ -75,6 +76,8 @@ Noninteractive setup requires an explicit download grant for that invocation:
 
 This checks dependencies without starting the service. Consent is not saved. Direct `./pebril check` checks configuration and existing libraries offline; it does not download them.
 
+If the detected program memory ceiling is below 40% of system memory, startup requires consent and limits concurrency to one with AVIF conversion disabled. For noninteractive startup, use `./pebril.sh --allow-low-memory`; download consent is separate. The grant applies only to that invocation. Checks report this condition without starting the service.
+
 The package requires Linux x64, glibc >=2.34, compatible system C/C++ runtimes, Bash, coreutils, and flock. Downloaded runtimes also require SSSE3, SSE4.1, SSE4.2, and POPCNT. Downloads need HTTPS access, trusted CA certificates, and a library directory owned by the service user and not writable by others. Deployment requires no compilers; valid runtimes can be reused offline.
 
 The default address is `127.0.0.1:8080`. `/` and `/login` show the basic account/upload page; `/healthz` and `/api/v1/status` provide service status. On first deployment, initialize the administrator, sign in, and select images. No default account or password is supplied.
@@ -89,11 +92,17 @@ Paths resolve relative to the executable. Copy `.env.example` to `.env` for depl
 
 For upgrades, stop the service, back up configuration and data, and deploy into a new directory while preserving configured data paths. Do not replace live configuration with examples.
 
+## Resource controls
+
+Memory is sampled every 10 seconds for the program and its processing children. From 80% to below 95% of the detected ceiling, concurrency drops by one per sample. At 95% or above, new uploads and conversion starts pause; accepted transfers and running conversions may finish. Below 40%, processing resumes and concurrency increases by one per sample up to the effective limit. Incomplete samples pause new work until a complete recovery sample.
+
+Shared pages may be counted repeatedly, causing earlier degradation. Filesystems carrying application data and temporary files warn above 80% usage. Warning changes are logged, startup reports active warnings, and administrators see a summary when signing in.
+
 ## Build and checks
 
-With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies.
+With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days; Releases are published separately.
 
-Checks cover Go build/vet/race with `nomsgpack,image_worker` tags, Rust, JavaScript logic, uploads/conversion, and bootstrap behavior. Integration scripts are in `tests/integration/`; pinned Linux userspace checks are in `tests/compatibility/`. Bootstrap tests use explicit helper doubles for authorization paths. Debian 12, Ubuntu 22.04, and Rocky Linux 9.8 userspace checks share one kernel; they do not establish independent-machine compatibility. Real privileged installation and full-product acceptance remain open.
+Checks cover Go build/vet/race with `nomsgpack,image_worker` tags, Rust, JavaScript logic, uploads/conversion, and bootstrap behavior. Integration scripts are in `tests/integration/`; pinned Linux userspace checks are in `tests/compatibility/`. Bootstrap tests use explicit helper doubles for authorization paths. Debian 12, Ubuntu 22.04, and Rocky Linux 9.8 userspace checks share one kernel; they do not establish independent-machine compatibility. Resource checks cover startup consent, concurrency and cooldown, AVIF task recovery, and administrator-only warnings. Low-memory integration uses controlled memory metadata, not an enforced memory quota. Real privileged installation, representative memory-pressure benchmarks, and full-product acceptance remain open.
 
 ## Repository layout
 
