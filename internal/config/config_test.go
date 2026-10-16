@@ -112,3 +112,42 @@ func TestDeploymentPathsAndAVIF(t *testing.T) {
 		t.Fatal("Overlapping paths were accepted")
 	}
 }
+
+func TestRestrictedSnapshotRetainsConfiguredAVIFTarget(t *testing.T) {
+	d := testDeployment(t)
+	d.AVIF, d.Restricted = true, true
+	path := filepath.Join(d.Root, "config.json")
+	configured := []byte(`{"static_format":"avif","upload_formats":{"avif":true},"conversion_concurrency":8}`)
+	if err := os.WriteFile(path, configured, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := New(d, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	check := func() {
+		t.Helper()
+		s := m.Snapshot()
+		if s.Policy.ConversionConcurrency != 1 || s.Policy.UploadFormats["avif"] || s.Policy.StaticFormat != "avif" {
+			t.Fatal("Restricted snapshot changed the target or bypassed restrictions", s)
+		}
+	}
+	check()
+	if err = os.WriteFile(path, []byte(`{"static_format":"avif","upload_formats":{"avif":true},"conversion_concurrency":20}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	// Restricted execution must not rewrite the deployment's valid configured policy.
+	original, err := Read(path, d)
+	if err != nil || original.ConversionConcurrency != 20 || !original.UploadFormats["avif"] {
+		t.Fatal(original, err)
+	}
+	d.AVIF = false
+	if original.Validate(d) == nil {
+		t.Fatal("Restriction bypassed original AVIF deployment validation")
+	}
+}

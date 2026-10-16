@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kserksi/Pebril/internal/resources"
 	"io"
 	"os"
 	"os/exec"
@@ -102,7 +103,7 @@ func runChild(ctx context.Context, executable, dir, library string, avif bool) (
 	stderr := cancelingImageBuffer{cancel: cancel}
 	command.Stdout = &out
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := resources.Run(command); err != nil {
 		return Result{}, fmt.Errorf("Native self-test child failed: %w (%s)", err, stderr.String())
 	}
 	var result Result

@@ -14,6 +14,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"github.com/kserksi/Pebril/internal/config"
+	"github.com/kserksi/Pebril/internal/resources"
 	"io"
 	"os"
 	"os/exec"
@@ -21,6 +22,8 @@ import (
 	"syscall"
 	"unsafe"
 )
+
+var ErrAVIFDisabled = errors.New("AVIF conversion is disabled for this startup")
 
 type ImageResult struct {
 	Format string `json:"format"`
@@ -177,7 +180,23 @@ func svgRoot(path string) error {
 	}
 	return nil
 }
-func Verify(ctx context.Context, executable, library, rust, input, output, policyPath string) (ImageResult, error) {
+func Verify(ctx context.Context, executable, library, rust, input, output, policyPath string, allowAVIF bool) (ImageResult, error) {
+	if !allowAVIF {
+		file, err := os.Open(input)
+		if err != nil {
+			return ImageResult{}, err
+		}
+		header := make([]byte, 512)
+		n, err := io.ReadFull(file, header)
+		file.Close()
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return ImageResult{}, err
+		}
+		if isAVIF(header[:n]) {
+			return ImageResult{}, ErrAVIFDisabled
+		}
+	}
+
 	childContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	command := exec.CommandContext(childContext, executable, "_image-verify", library, rust, input, output, policyPath)
@@ -189,7 +208,7 @@ func Verify(ctx context.Context, executable, library, rust, input, output, polic
 	stderr := cancelingImageBuffer{cancel: cancel}
 	command.Stdout = &out
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := resources.Run(command); err != nil {
 		return ImageResult{}, errors.New("Isolated image validation failed")
 	}
 	var result ImageResult

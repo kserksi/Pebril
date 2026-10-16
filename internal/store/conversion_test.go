@@ -231,18 +231,68 @@ func TestSchedulingRotatesUsersAndPrioritizesNewImages(t *testing.T) {
 	own, other := strings.Repeat("c", 32), strings.Repeat("d", 32)
 	add(own, first.UserID)
 	add(other, secondUser)
-	selected, err := db.NextConversion(first.UserID)
+	selected, err := db.NextConversion(first.UserID, false)
 	if err != nil || selected != other {
 		t.Fatal("Users did not rotate", selected, err)
 	}
 	db.ClaimConversion(other)
-	selected, err = db.NextConversion(secondUser)
+	selected, err = db.NextConversion(secondUser, false)
 	if err != nil || selected != own {
 		t.Fatal("Retry overtook new work", selected, err)
 	}
 	db.ClaimConversion(own)
-	selected, err = db.NextConversion(first.UserID)
+	selected, err = db.NextConversion(first.UserID, false)
 	if err != nil || selected != first.ID {
 		t.Fatal("Eligible retry was not scheduled", selected, err)
+	}
+}
+
+func TestRestrictedQueueKeepsAVIFWithoutBlockingOtherWork(t *testing.T) {
+	policy := config.Defaults()
+	policy.StaticFormat = "avif"
+	db, avif := conversionFixture(t, policy)
+	if err := db.RequeueConversion(avif.ID, avif.Generation); err != nil {
+		t.Fatal(err)
+	}
+	add := func(id, format string, frames int, output string) {
+		t.Helper()
+		snapshot := avif.Policy
+		snapshot.Policy.StaticFormat = output
+		if err := db.AcceptUpload(id, avif.UserID, snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Received(id); err != nil {
+			t.Fatal(err)
+		}
+		image := Image{ID: id, State: "queued", Hash: strings.Repeat("b", 64), Format: format, Bytes: 42, Width: 2, Height: 2, Frames: frames}
+		if err := db.SaveUpload(image); err != nil {
+			t.Fatal(err)
+		}
+	}
+	input, plain, animated := strings.Repeat("c", 32), strings.Repeat("d", 32), strings.Repeat("e", 32)
+	add(input, "avif", 1, "webp")
+	add(plain, "png", 1, "webp")
+	add(animated, "gif", 2, "avif")
+	for _, expected := range []string{plain, animated} {
+		id, err := db.NextConversion(avif.UserID, true)
+		if err != nil || id != expected {
+			t.Fatal("Restricted queue blocked eligible conversion", id, err)
+		}
+		if _, err = db.ClaimConversion(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if id, err := db.NextConversion(avif.UserID, true); err == nil {
+		t.Fatal("Restricted mode selected AVIF", id)
+	}
+	for _, id := range []string{avif.ID, input} {
+		image, err := db.Image(id)
+		if err != nil || image.State != "queued" || image.Attempts != 0 {
+			t.Fatal("Restricted mode changed accepted AVIF task", image, err)
+		}
+	}
+	id, err := db.NextConversion(avif.UserID, false)
+	if err != nil || id != avif.ID {
+		t.Fatal("Normal startup did not resume AVIF queue", id, err)
 	}
 }

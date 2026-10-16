@@ -18,13 +18,20 @@ import (
 
 	"github.com/kserksi/Pebril/internal/config"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/resources"
 	"github.com/kserksi/Pebril/internal/store"
 )
 
 var ErrTooLarge = errors.New("Upload exceeds configured byte limit")
 var ErrEmpty = errors.New("Upload is empty")
+var ErrResourceCooldown = errors.New("Processing is cooling down; try uploading again after resources recover")
+
+type ResourceState interface {
+	State() resources.State
+}
 
 type Service struct {
+	Resources  ResourceState
 	DB         *store.Store
 	Manager    *config.Manager
 	Deployment config.Deployment
@@ -41,8 +48,12 @@ type Service struct {
 }
 
 func New(db *store.Store, m *config.Manager, d config.Deployment, executable string, capability nativeprobe.Result) (*Service, error) {
+	return NewWithResources(db, m, d, executable, capability, nil)
+}
+
+func NewWithResources(db *store.Store, m *config.Manager, d config.Deployment, executable string, capability nativeprobe.Result, monitor ResourceState) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
+	s := &Service{Resources: monitor, DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
 	for _, dir := range []string{s.incoming(), s.objectDir()} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			cancel()
@@ -136,7 +147,7 @@ func New(db *store.Store, m *config.Manager, d config.Deployment, executable str
 	}
 	for _, id := range ids {
 		if m.Snapshot().Policy.ResumeTasks {
-			s.start(id)
+			s.start(id, true)
 		} else {
 			db.FailUpload(id, "Task restoration is disabled")
 			os.RemoveAll(s.scratch(id))
@@ -171,6 +182,10 @@ func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, err
 	if s.closing {
 		s.lifecycle.Unlock()
 		return store.Image{}, nil, errors.New("Upload service is stopping")
+	}
+	if s.Resources != nil && s.Resources.State().Cooldown {
+		s.lifecycle.Unlock()
+		return store.Image{}, nil, ErrResourceCooldown
 	}
 	s.workers.Add(1)
 	s.lifecycle.Unlock()
@@ -232,11 +247,11 @@ func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, err
 	if err = s.DB.Received(id); err != nil {
 		return fail(err)
 	}
-	done := s.start(id)
+	done := s.start(id, false)
 	image, err := s.DB.Image(id)
 	return image, done, err
 }
-func (s *Service) start(id string) <-chan struct{} {
+func (s *Service) start(id string, restored bool) <-chan struct{} {
 	done := make(chan struct{})
 	s.workers.Add(1)
 	go func() {
@@ -251,6 +266,12 @@ func (s *Service) start(id string) <-chan struct{} {
 		if err := s.validate(id); err != nil {
 			// A shutdown leaves fully received input durable for restart restoration.
 			if s.ctx.Err() != nil {
+				return
+			}
+			if restored && s.Deployment.Restricted && errors.Is(err, nativeprobe.ErrAVIFDisabled) {
+				if _, e := s.DB.DB.Exec("UPDATE images SET error=? WHERE id=? AND state='received'", "AVIF processing is waiting for a normal startup", id); e != nil {
+					slog.Error("Cannot persist deferred AVIF status", "image", id, "error", e)
+				}
 				return
 			}
 			message := "Image validation or storage failed"
@@ -284,9 +305,12 @@ func (s *Service) validate(id string) error {
 	if err = os.WriteFile(policyPath, data, 0600); err != nil {
 		return err
 	}
-	result, err := nativeprobe.Verify(s.ctx, s.Executable, s.Capability.VipsPath, filepath.Join(s.Deployment.NativeDir, "libpebril_native.so"), input, output, policyPath)
+	result, err := nativeprobe.Verify(s.ctx, s.Executable, s.Capability.VipsPath, filepath.Join(s.Deployment.NativeDir, "libpebril_native.so"), input, output, policyPath, !s.Deployment.Restricted)
 	if err != nil {
 		return err
+	}
+	if s.Deployment.Restricted && result.Format != "svg" && result.Frames <= 1 && image.Policy.Policy.StaticFormat == "avif" {
+		return nativeprobe.ErrAVIFDisabled
 	}
 	if result.Format != "svg" {
 		output = input
@@ -391,12 +415,15 @@ func (s *Service) validate(id string) error {
 	return nil
 }
 func IsCapacity(err error) bool {
-	return errors.Is(err, store.ErrCapacity) || errors.Is(err, store.ErrQuota)
+	return errors.Is(err, store.ErrCapacity) || errors.Is(err, store.ErrQuota) || errors.Is(err, ErrResourceCooldown)
 }
 func (s *Service) Result(id string, user int64) (store.Image, error) {
 	image, err := s.DB.Image(id)
 	if err == nil && image.UserID != user {
 		return store.Image{}, fmt.Errorf("%w", os.ErrNotExist)
+	}
+	if err == nil && s.Deployment.Restricted && (image.State == "queued" || image.State == "retry_wait") && (image.Format == "avif" || image.Frames <= 1 && image.Policy.Policy.StaticFormat == "avif") {
+		image.Error = "AVIF conversion is waiting for a normal startup"
 	}
 	return image, err
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/kserksi/Pebril/internal/resources"
 	"io"
 	"os"
 	"os/exec"
@@ -40,7 +41,7 @@ func invoke(ctx context.Context, worker, library, directory string, args []strin
 	out, stderr := outputBuffer{cancel: cancel}, outputBuffer{cancel: cancel}
 	command.Stdout = &out
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := resources.Run(command); err != nil {
 		return Result{}, errors.New("Isolated image conversion failed")
 	}
 	decoder := json.NewDecoder(&out.data)

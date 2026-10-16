@@ -72,6 +72,14 @@ func (s *Service) startScheduler() error {
 			}
 			s.queue.mu.Lock()
 			limit := s.Manager.Snapshot().Policy.ConversionConcurrency
+			cooldown := false
+			if s.Resources != nil {
+				state := s.Resources.State()
+				cooldown = state.Cooldown
+				if !cooldown {
+					limit = min(limit, state.Concurrency)
+				}
+			}
 			jobs := make([]*conversionJob, 0, len(s.queue.jobs))
 			for _, job := range s.queue.jobs {
 				if !job.stopping {
@@ -87,8 +95,8 @@ func (s *Service) startScheduler() error {
 				job.cancel()
 				s.lifecycle.Unlock()
 			}
-			for len(s.queue.jobs) < limit && s.ctx.Err() == nil {
-				id, e := s.DB.NextConversion(lastUser)
+			for !cooldown && len(s.queue.jobs) < limit && s.ctx.Err() == nil {
+				id, e := s.DB.NextConversion(lastUser, s.Deployment.Restricted)
 				if e != nil {
 					break
 				}
@@ -228,7 +236,7 @@ func (s *Service) convertImage(ctx context.Context, image store.Image) error {
 	if original.Frames > 1 {
 		target = image.Policy.Policy.AnimatedFormat
 	}
-	if !s.Deployment.AVIF && (original.Format == "avif" || target == "avif") {
+	if (!s.Deployment.AVIF || s.Deployment.Restricted) && (original.Format == "avif" || target == "avif") {
 		return errors.New("New AVIF processing is disabled")
 	}
 	if original.Hash == "" {
@@ -280,7 +288,7 @@ func (s *Service) convertImage(ctx context.Context, image store.Image) error {
 	if err = os.WriteFile(policyPath, data, 0600); err != nil {
 		return err
 	}
-	verified, err := nativeprobe.Verify(ctx, s.Executable, s.Capability.VipsPath, request.Rust, filepath.Join(dir, "result"), filepath.Join(dir, "unused.svg"), policyPath)
+	verified, err := nativeprobe.Verify(ctx, s.Executable, s.Capability.VipsPath, request.Rust, filepath.Join(dir, "result"), filepath.Join(dir, "unused.svg"), policyPath, !s.Deployment.Restricted)
 	if err != nil {
 		return err
 	}
@@ -298,7 +306,7 @@ func (s *Service) convertImage(ctx context.Context, image store.Image) error {
 		if err = os.WriteFile(policyPath, data, 0600); err != nil {
 			return err
 		}
-		cover, err = nativeprobe.Verify(ctx, s.Executable, s.Capability.VipsPath, request.Rust, filepath.Join(dir, "cover"), filepath.Join(dir, "unused.svg"), policyPath)
+		cover, err = nativeprobe.Verify(ctx, s.Executable, s.Capability.VipsPath, request.Rust, filepath.Join(dir, "cover"), filepath.Join(dir, "unused.svg"), policyPath, !s.Deployment.Restricted)
 		if err != nil {
 			return err
 		}

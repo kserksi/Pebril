@@ -59,9 +59,14 @@ async function loadAccount() {
   document.querySelector('#account-submit').textContent = initializing ? 'Create administrator' : 'Sign in';
   for (const id of ['logout','token-controls','upload-section']) document.querySelector(`#${id}`).hidden = !account;
 }
+function showLoginWarnings(value) {
+  if (value.user?.admin && Array.isArray(value.resource_warnings) && value.resource_warnings.length) {
+    alert(value.resource_warnings.map(warning => warning.message).join('\n'));
+  }
+}
 form.addEventListener('submit', async event => {
   event.preventDefault(); const button = document.querySelector('#account-submit'); button.disabled = true;
-  try {await api(initializing ? 'initialize' : 'login', 'POST', Object.fromEntries(new FormData(form))); form.reset(); await loadAccount();}
+  try {const value=await api(initializing ? 'initialize' : 'login', 'POST', Object.fromEntries(new FormData(form))); form.reset(); await loadAccount(); showLoginWarnings(value);}
   catch (error) {accountStatus.textContent = error.message;}
   finally {button.disabled = false;}
 });

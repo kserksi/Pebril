@@ -3,6 +3,7 @@ package nativeprobe
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,11 +50,30 @@ func TestNoisyValidatorIsTerminatedBeforeDeadline(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := Verify(ctx, executable, "unused", "unused", filepath.Join(root, "input"), filepath.Join(root, "output"), filepath.Join(root, "policy"))
+	_, err := Verify(ctx, executable, "unused", "unused", filepath.Join(root, "input"), filepath.Join(root, "output"), filepath.Join(root, "policy"), true)
 	if err == nil {
 		t.Fatal("Excessive native output was accepted")
 	}
 	if ctx.Err() != nil {
 		t.Fatal("Validator blocked until the external deadline instead of enforcing the output limit")
+	}
+}
+
+func TestRestrictedAVIFDoesNotStartValidationWorker(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	header := make([]byte, 20)
+	binary.BigEndian.PutUint32(header, 20)
+	copy(header[4:], "ftypavif")
+	if err := os.WriteFile(input, header, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Verify(context.Background(), filepath.Join(root, "missing-worker"), "missing-codec", "missing-library", input, filepath.Join(root, "output"), filepath.Join(root, "policy"), false)
+	if !errors.Is(err, ErrAVIFDisabled) {
+		t.Fatal("Restricted AVIF reached the worker", err)
+	}
+	bytes, err := os.ReadFile(input)
+	if err != nil || string(bytes) != string(header) {
+		t.Fatal("Restriction changed accepted input", err)
 	}
 }

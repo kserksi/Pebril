@@ -61,7 +61,11 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 			c.JSON(200, gin.H{"initialized": initialized})
 			return
 		}
-		c.JSON(200, gin.H{"initialized": initialized, "user": session.User, "csrf": session.CSRF})
+		value := gin.H{"initialized": initialized, "user": session.User, "csrf": session.CSRF}
+		if session.User.Admin && upload != nil && upload.Resources != nil {
+			value["resources"] = upload.Resources.State()
+		}
+		c.JSON(200, value)
 	})
 	for _, path := range []string{"initialize", "login"} {
 		path := path
@@ -108,7 +112,11 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 			}
 			origin, _ := url.Parse(c.GetHeader("Origin"))
 			http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", Expires: session.Expires, MaxAge: int(auth.SessionLifetime.Seconds()), HttpOnly: true, Secure: c.Request.TLS != nil || origin.Scheme == "https", SameSite: http.SameSiteStrictMode})
-			c.JSON(200, gin.H{"user": session.User, "csrf": session.CSRF})
+			value := gin.H{"user": session.User, "csrf": session.CSRF}
+			if session.User.Admin && upload != nil && upload.Resources != nil {
+				value["resource_warnings"] = upload.Resources.State().Warnings
+			}
+			c.JSON(200, value)
 		})
 	}
 	router.POST("/api/v1/logout", requireSession(service, true, func(_ auth.Session, c *gin.Context) {

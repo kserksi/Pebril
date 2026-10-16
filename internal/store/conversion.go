@@ -47,9 +47,9 @@ func (s *Store) Files(id string) ([]ImageFile, error) {
 	}
 	return files, rows.Err()
 }
-func (s *Store) NextConversion(afterUser int64) (string, error) {
+func (s *Store) NextConversion(afterUser int64, restricted bool) (string, error) {
 	var id string
-	err := s.DB.QueryRow(`SELECT id FROM images WHERE state='queued' OR (state='retry_wait' AND next_run<=?) ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,CASE WHEN user_id>? THEN 0 ELSE 1 END,user_id,created_at,id LIMIT 1`, time.Now().UnixMilli(), afterUser).Scan(&id)
+	err := s.DB.QueryRow(`SELECT id FROM images WHERE (state='queued' OR (state='retry_wait' AND next_run<=?)) AND (NOT ? OR (format!='avif' AND (frames>1 OR json_extract(policy,'$.policy.static_format')!='avif'))) ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,CASE WHEN user_id>? THEN 0 ELSE 1 END,user_id,created_at,id LIMIT 1`, time.Now().UnixMilli(), restricted, afterUser).Scan(&id)
 	return id, err
 }
 func (s *Store) ClaimConversion(id string) (Image, error) {

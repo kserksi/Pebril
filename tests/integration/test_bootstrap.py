@@ -14,7 +14,7 @@ SCRIPT = ROOT / 'scripts/pebril.sh'
 HELPER = r'''#!/bin/bash
 native="$(dirname "$(dirname "$0")")/bin"
 case "$1" in
- settings) printf '%s\0false\0%s\0' "$native" "$(dirname "$native")" ;;
+ settings) printf '%s\0false\0%s\0false\0' "$native" "$(dirname "$native")" ;;
  find)
   if [[ ${MOCK_SLOW:-} == yes ]]; then
     printf '%s' "$$" > "$native/helper.pid"
@@ -129,6 +129,165 @@ esac
     print('System-candidate rejection passed: 12 OS/metadata cases, sudo never reached, fallback needs a separate grant (metadata/helper doubles).')
 
 
+
+MEMORY_HELPER = r'''#!/bin/bash
+# Explicit low-memory preflight double: no host memory overrides or real installation.
+native="$(dirname "$(dirname "$0")")/bin"
+case "$1" in
+ settings)
+  printf '%s' "$$" > "$native/preflight.pid"
+  readlink "/proc/$$/fd/1" > "$native/preflight-output"
+  case ${MOCK_SETTINGS:-valid} in
+   failure) exit 1 ;;
+   empty) exit 0 ;;
+   partial-failure) printf '%s\0false\0%s\0true\0' "$native" "$(dirname "$native")"; exit 1 ;;
+  esac
+  allow=false
+  check=false
+  for arg in "${@:3}"; do
+   case "$arg" in --allow-low-memory) allow=true ;; --check) check=true ;; *) exit 1 ;; esac
+  done
+  printf 'Memory preflight double: 39 bytes of 100 system bytes (39%%), concurrency 1, AVIF conversion disabled.\n' >&2
+  if ! $allow && ! $check; then
+   [[ -t 0 && -t 2 ]] || { printf 'Restricted startup requires --allow-low-memory.\n' >&2; exit 1; }
+   printf 'Start in restricted mode? [y/N] ' >&2
+   IFS= read -r answer || exit 1
+   [[ "$answer" == y || "$answer" == yes ]] || exit 1
+  fi
+  printf '%s\0false\0%s\0true\0' "$native" "$(dirname "$native")" ;;
+ find)
+  printf '%s\n' "$3" >> "$native/probe-avif"
+  [[ -e "$native/ready" ]] || exit 1
+  printf '%s\n' "$native/ready" ;;
+ host) exit 0 ;;
+ install) printf '%s\n' "$2" >> "$native/attempts"; exit 1 ;;
+ *) exit 1 ;;
+esac
+'''
+
+
+def restricted_preflight_contract(env):
+    """Real Bash/PTY lifecycle with an explicit memory/helper double, no changed host limits."""
+    with tempfile.TemporaryDirectory(prefix='bootstrap-memory-', dir=ROOT / '.build') as temporary:
+        app = Path(temporary)
+        native = app / 'bin'
+        native.mkdir(mode=0o700)
+        launcher = app / 'pebril.sh'
+        launcher.write_bytes(SCRIPT.read_bytes())
+        launcher.chmod(0o700)
+        helper = native / 'pebril-runtime'
+        helper.write_text(MEMORY_HELPER)
+        helper.chmod(0o700)
+        service = app / 'pebril'
+        service.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$(dirname "$0")/service-called"\n')
+        service.chmod(0o700)
+        ready = native / 'ready'
+        ready.touch()
+        called = app / 'service-called'
+
+        def run(*args, extra=None):
+            return subprocess.run([str(launcher), *args], env=dict(env, **(extra or {})),
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+
+        # Deployment-install grants and ambient values must never authorize low-memory serving.
+        for args in [(), ('--allow-system-install',), ('--allow-downloads',),
+                     ('--allow-system-install', '--allow-downloads')]:
+            result = run(*args, extra={'PEBRIL_ALLOW_LOW_MEMORY': 'true'})
+            assert result.returncode != 0 and '--allow-low-memory' in result.stderr, result.stderr
+            assert not called.exists() and not (native / 'probe-avif').exists(), 'Unconsented preflight reached probes/service'
+
+        result = run('--allow-low-memory')
+        assert result.returncode == 0, result.stderr
+        assert called.read_text().splitlines() == ['serve', '--allow-low-memory'], 'Restricted grant was not forwarded'
+        assert (native / 'probe-avif').read_text().splitlines() == ['false'], 'Restricted native probe required AVIF'
+        called.unlink()
+        result = run()
+        assert result.returncode != 0 and not called.exists(), 'Invocation consent persisted'
+
+        result = run('--check')
+        assert result.returncode == 0 and not called.exists(), 'Check started serving or required a serve grant'
+        assert set((native / 'probe-avif').read_text().splitlines()) == {'false'}
+
+        # Even complete protocol bytes from a failed helper cannot start serving.
+        for mode in ['failure', 'empty', 'partial-failure']:
+            result = run('--allow-low-memory', extra={'MOCK_SETTINGS': mode})
+            assert result.returncode != 0 and not called.exists(), (mode, result.stderr)
+            assert not Path((native / 'preflight-output').read_text().strip()).exists(), 'Failed settings leaked a temp file'
+
+        # A low-memory grant cannot silently grant runtime downloads.
+        ready.unlink()
+        result = run('--allow-low-memory')
+        assert result.returncode != 0 and 'not authorized' in result.stderr, result.stderr
+        assert not (native / 'attempts').exists() and not called.exists(), 'Low-memory grant authorized a dependency download'
+        ready.touch()
+
+        def terminal(answer=None, terminate=False):
+            master, slave = pty.openpty()
+            process = subprocess.Popen([str(launcher)], stdin=slave, stdout=slave, stderr=slave,
+                                       env=env, start_new_session=True)
+            os.close(slave)
+            content = b''
+            sent = False
+            helper_pid = None
+            settings_output = None
+            terminated_at = None
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    readable, _, _ = select.select([master], [], [], 0.05)
+                    if readable:
+                        try:
+                            chunk = os.read(master, 8192)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        content += chunk
+                        if b'[y/N]' in content and not sent:
+                            helper_pid = int((native / 'preflight.pid').read_text())
+                            settings_output = Path((native / 'preflight-output').read_text().strip())
+                            if terminate:
+                                assert process.poll() is None and Path(f'/proc/{helper_pid}').exists(), 'Preflight was not active at the prompt'
+                                assert settings_output.is_file(), 'Settings output was not active at the prompt'
+                                terminated_at = time.monotonic()
+                                process.send_signal(signal.SIGTERM)
+                            else:
+                                os.write(master, answer)
+                            sent = True
+                    if process.poll() is not None:
+                        break
+                process.wait(timeout=2)
+                assert sent, content.decode(errors='replace')
+                if terminate:
+                    assert process.returncode != 0, 'Signal accepted startup'
+                    assert not Path(f'/proc/{helper_pid}').exists(), 'Cancelled preflight helper still running'
+                    assert not settings_output.exists(), 'Cancelled preflight leaked settings output'
+                    print(f'Preflight SIGTERM verified: launcher status {process.returncode}, helper gone, temp removed in {time.monotonic() - terminated_at:.3f}s.')
+                return process.returncode, content.decode(errors='replace')
+            finally:
+                # Reap only this isolated test process group if the contract fails.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                if process.poll() is None:
+                    process.wait(timeout=2)
+                os.close(master)
+                if settings_output is not None:
+                    settings_output.unlink(missing_ok=True)
+
+        for answer, success in [(b'n\n', False), (b'\x04', False), (b'y\n', True)]:
+            status, content = terminal(answer=answer)
+            assert (status == 0) == success, content
+            if success:
+                assert called.read_text().splitlines() == ['serve', '--allow-low-memory']
+                called.unlink()
+            else:
+                assert not called.exists(), 'Denied preflight reached the service'
+        terminal(terminate=True)
+        assert not called.exists(), 'Cancelled preflight reached the service'
+    print('Restricted-start launcher passed: independent invocation consent, terminal yes/no/EOF, effective AVIF, service handoff, check isolation, failed protocol and cancellation (memory/helper doubles).')
+
 def main():
     (ROOT / '.build').mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='bootstrap-contract-', dir=ROOT / '.build') as temporary:
@@ -238,6 +397,7 @@ def main():
         result = run()
         assert result.returncode != 0 and 'symbolic link' in result.stderr
         assert not (app / 'unrelated').exists()
+    restricted_preflight_contract(env)
     print('Bootstrap contract passed: no implicit consent, terminal yes/no, ordered fallback, independent check, concurrent repair, cancellation and lock safety (helper doubles).')
 
 

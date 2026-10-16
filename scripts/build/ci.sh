@@ -30,6 +30,7 @@ python3 tests/integration/test_bootstrap.py
 python3 tests/integration/test_server.py
 python3 tests/integration/test_uploads.py
 python3 tests/integration/test_conversion.py
+python3 tests/integration/test_resources.py
 rust_notices="$(rustc --print sysroot)/share/doc/rust"
 mkdir -p "$PEBRIL_BUILD_OUTPUT/third-party/rust-standard-library"
 cp "$rust_notices/COPYRIGHT-library.html" "$PEBRIL_BUILD_OUTPUT/third-party/rust-standard-library/"

@@ -9,12 +9,14 @@ fail() { printf 'Pebril bootstrap: %s\n' "$*" >&2; exit 1; }
 note() { printf 'Pebril bootstrap: %s\n' "$*" >&2; }
 usage() {
     cat <<'HELP'
-Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [serve|check|version]
+Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [--allow-low-memory] [serve|check|version]
 
 Run as the ordinary service user. Deployment checks and dependency repair run
 before the service. --check (or check) validates without starting the service.
 --allow-system-install authorizes this invocation's eligible system transaction.
 --allow-downloads authorizes this invocation's pinned upstream -> Pebril fallback.
+--allow-low-memory authorizes restricted serving when the memory allowance is below
+40% of system RAM: concurrency 1, AVIF conversion disabled. Check never serves.
 Without these options, interactive use asks before each kind of installation;
 noninteractive use stops when the next required action is not authorized.
 No authorization is saved. Existing valid libraries can be reused offline.
@@ -24,12 +26,14 @@ command=serve
 command_set=false
 allow_system=false
 allow_downloads=false
+allow_low_memory=false
 while (($#)); do
     case "$1" in
         --help|-h) usage; exit 0 ;;
         --check) command=check; command_set=true ;;
         --allow-system-install) allow_system=true ;;
         --allow-downloads) allow_downloads=true ;;
+        --allow-low-memory) allow_low_memory=true ;;
         serve|check|version)
             if $command_set && [[ "$command" != "$1" ]]; then fail 'Choose one command.'; fi
             command=$1; command_set=true ;;
@@ -50,11 +54,21 @@ if [[ "$command" == version ]]; then exec "$service" version; fi
 
 # Never source deployment configuration: dotenv values are data, not shell code.
 settings=()
-while IFS= read -r -d '' value; do settings+=("$value"); done < <("$helper" settings "$root")
-((${#settings[@]} == 3)) || fail 'Deployment configuration could not be read.'
+settings_args=(settings "$root")
+if [[ "$command" == check ]]; then settings_args+=(--check); fi
+if $allow_low_memory; then settings_args+=(--allow-low-memory); fi
+settings_output=$(mktemp /tmp/pebril-settings.XXXXXXXX) || fail 'Cannot create a private settings-output file.'
+trap 'rm -f -- "$settings_output"' EXIT
+"$helper" "${settings_args[@]}" > "$settings_output" || fail 'Deployment preflight failed.'
+while IFS= read -r -d '' value; do settings+=("$value"); done < "$settings_output"
+rm -f -- "$settings_output"
+trap - EXIT
+((${#settings[@]} == 4)) || fail 'Deployment configuration could not be read.'
 native=${settings[0]}
 avif=${settings[1]}
-[[ "${settings[2]}" == "$root" && "$native" == /* && "$avif" =~ ^(true|false)$ ]] || fail 'Invalid deployment settings protocol.'
+restricted=${settings[3]}
+[[ "${settings[2]}" == "$root" && "$native" == /* && "$avif" =~ ^(true|false)$ && "$restricted" =~ ^(true|false)$ ]] || fail 'Invalid deployment settings protocol.'
+[[ "$restricted" != true || "$avif" == false ]] || fail 'Restricted runtime checks require AVIF disabled.'
 [[ "$native" != *$'\n'* && "$root" != *$'\n'* ]] || fail 'Newlines in deployment paths are unsupported.'
 
 # One prompt/repair flow per native directory; close the descriptor before exec.
@@ -109,6 +123,9 @@ finish() {
     if [[ "$command" == check ]]; then
         printf 'Runtime checks passed.\n'
         exit 0
+    fi
+    if [[ "$restricted" == true ]] || $allow_low_memory; then
+        exec "$service" serve --allow-low-memory
     fi
     exec "$service" serve
 }

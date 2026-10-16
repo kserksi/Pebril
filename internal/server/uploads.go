@@ -76,6 +76,10 @@ func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
 		if errors.Is(err, uploads.ErrTooLarge) {
 			status = 413
 		}
+		if errors.Is(err, uploads.ErrResourceCooldown) {
+			c.JSON(429, gin.H{"error": message, "code": "resource_cooldown"})
+			return
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

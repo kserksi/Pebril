@@ -27,6 +27,7 @@ type Deployment struct {
 	DBDir      string `json:"-"`
 	NativeDir  string `json:"-"`
 	AVIF       bool   `json:"avif"`
+	Restricted bool   `json:"-"`
 }
 
 // Expose only confirmed phase-A fields; phase-B defaults are enforced without configuration fields.
@@ -314,6 +315,10 @@ func (m *Manager) Snapshot() Snapshot {
 	s.Policy.UploadFormats = map[string]bool{}
 	for k, v := range current.Policy.UploadFormats {
 		s.Policy.UploadFormats[k] = v
+	}
+	if m.deployment.Restricted {
+		s.Policy.ConversionConcurrency = 1
+		s.Policy.UploadFormats["avif"] = false
 	}
 	return s
 }

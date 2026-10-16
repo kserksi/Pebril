@@ -9,6 +9,7 @@ import (
 	"github.com/kserksi/Pebril/internal/config"
 	"github.com/kserksi/Pebril/internal/imageproc"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/resources"
 	"github.com/kserksi/Pebril/internal/server"
 	"github.com/kserksi/Pebril/internal/store"
 	"github.com/kserksi/Pebril/internal/uploads"
@@ -23,7 +24,7 @@ import (
 	"time"
 )
 
-var version = "0.0.5-dev"
+var version = "0.0.6-dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -61,19 +62,13 @@ func run() error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(nativeprobe.VerifyLocal(args[1], args[2], args[3], args[4], policy))
 	}
-	command := "serve"
-	if len(args) > 0 {
-		command = args[0]
-	}
-	if len(args) > 1 {
-		return errors.New("Usage: pebril [serve|check|version]")
+	command, allow, err := commandArgs(args)
+	if err != nil {
+		return err
 	}
 	if command == "version" {
 		fmt.Println(version)
 		return nil
-	}
-	if command != "serve" && command != "check" {
-		return errors.New("Usage: pebril [serve|check|version]")
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -87,6 +82,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	deploy.Restricted, err = resources.CheckStartup(allow, command == "check")
+	if err != nil {
+		return err
+	}
 	manager, err := config.New(deploy, true)
 	if err != nil {
 		return err
@@ -97,7 +96,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	capability, err := nativeprobe.Run(ctx, executable, deploy.NativeDir, deploy.AVIF)
+	capability, err := nativeprobe.Run(ctx, executable, deploy.NativeDir, deploy.AVIF && !deploy.Restricted)
 	if err == nil {
 		capability.VipsPath, capability.VipsVersion, err = imageproc.Prepare(ctx, deploy.NativeDir, capability.VipsPath)
 		if err != nil {
@@ -114,11 +113,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	for _, dir := range []string{deploy.DataDir, deploy.PublicDir, deploy.PrivateDir} {
+	for _, dir := range []string{deploy.DataDir, deploy.PublicDir, deploy.PrivateDir, deploy.DBDir, filepath.Join(deploy.DataDir, ".incoming"), filepath.Join(deploy.PublicDir, ".objects")} {
 		if err = os.MkdirAll(dir, 0700); err != nil {
 			return err
 		}
 	}
+	monitor, err := resources.NewMonitor(ctx, func() int { return manager.Snapshot().Policy.ConversionConcurrency }, deploy.Restricted,
+		[]string{deploy.DBDir, deploy.PublicDir, deploy.PrivateDir, filepath.Join(deploy.DataDir, ".incoming"), filepath.Join(deploy.DataDir, ".converting"), filepath.Join(deploy.PublicDir, ".objects"), os.TempDir()})
+	if err != nil {
+		return err
+	}
+	defer monitor.Close()
 	database, err := store.Open(deploy.DBDir)
 	if err != nil {
 		return err
@@ -128,7 +133,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	upload, err := uploads.New(database, manager, deploy, executable, capability)
+	upload, err := uploads.NewWithResources(database, manager, deploy, executable, capability, monitor)
 	if err != nil {
 		return err
 	}
@@ -169,4 +174,22 @@ func run() error {
 		}
 		return nil
 	}
+}
+
+func commandArgs(args []string) (string, bool, error) {
+	command, selected, allow := "serve", false, false
+	for _, arg := range args {
+		switch arg {
+		case "--allow-low-memory":
+			allow = true
+		case "serve", "check", "version":
+			if selected {
+				return "", false, errors.New("Choose one service command")
+			}
+			command, selected = arg, true
+		default:
+			return "", false, errors.New("Usage: pebril [serve|check|version] [--allow-low-memory]")
+		}
+	}
+	return command, allow, nil
 }

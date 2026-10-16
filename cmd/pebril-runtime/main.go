@@ -18,10 +18,18 @@ import (
 	"github.com/kserksi/Pebril/internal/nativeassets"
 	"github.com/kserksi/Pebril/internal/nativeinstall"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/resources"
 )
 
+var checkStartup = resources.CheckStartup
+
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx := context.Background()
+	stop := func() {}
+	// Preflight has no transaction to unwind; preserve signal termination during its prompt.
+	if len(os.Args) < 2 || os.Args[1] != "settings" {
+		ctx, stop = signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	}
 	defer stop()
 	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -50,7 +58,18 @@ func run(ctx context.Context, args []string) error {
 	if len(args) == 1 && args[0] == "host" {
 		return nativeprobe.HostCompatible()
 	}
-	if len(args) == 2 && args[0] == "settings" {
+	if len(args) >= 2 && args[0] == "settings" {
+		allow, checkOnly := false, false
+		for _, option := range args[2:] {
+			switch option {
+			case "--allow-low-memory":
+				allow = true
+			case "--check":
+				checkOnly = true
+			default:
+				return errors.New("Invalid deployment settings option")
+			}
+		}
 		root, err := filepath.EvalSymlinks(args[1])
 		if err != nil {
 			return err
@@ -59,17 +78,22 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, field := range []string{deploy.NativeDir, strconv.FormatBool(deploy.AVIF), deploy.Root} {
+		deploy.Restricted, err = checkStartup(allow, checkOnly)
+		if err != nil {
+			return err
+		}
+		avif := deploy.AVIF && !deploy.Restricted
+		for _, field := range []string{deploy.NativeDir, strconv.FormatBool(avif), deploy.Root} {
 			if err = safePath(field); err != nil {
 				return err
 			}
 		}
-		_, err = fmt.Fprintf(os.Stdout, "%s\x00%t\x00%s\x00", deploy.NativeDir, deploy.AVIF, deploy.Root)
+		_, err = fmt.Fprintf(os.Stdout, "%s\x00%t\x00%s\x00%t\x00", deploy.NativeDir, avif, deploy.Root, deploy.Restricted)
 		return err
 	}
 	valid := len(args) == 3 && args[0] == "find" || len(args) == 4 && (args[0] == "probe" || args[0] == "install")
 	if !valid {
-		return errors.New("Usage: pebril-runtime settings ROOT | host | find NATIVE AVIF | probe LIBRARY NATIVE AVIF | install upstream|pebril NATIVE AVIF")
+		return errors.New("Usage: pebril-runtime settings ROOT [--check] [--allow-low-memory] | host | find NATIVE AVIF | probe LIBRARY NATIVE AVIF | install upstream|pebril NATIVE AVIF")
 	}
 	native := args[len(args)-2]
 	if err := safePath(native); err != nil {
