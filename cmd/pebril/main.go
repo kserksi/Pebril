@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-var version = "0.0.6-dev"
+var version = "0.0.7-dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -81,6 +81,9 @@ func run() error {
 	deploy, err := config.LoadDeployment(filepath.Dir(executable))
 	if err != nil {
 		return err
+	}
+	if command == "reset-admin" {
+		return resetAdministrator(deploy)
 	}
 	deploy.Restricted, err = resources.CheckStartup(allow, command == "check")
 	if err != nil {
@@ -182,14 +185,17 @@ func commandArgs(args []string) (string, bool, error) {
 		switch arg {
 		case "--allow-low-memory":
 			allow = true
-		case "serve", "check", "version":
+		case "serve", "check", "version", "reset-admin":
 			if selected {
 				return "", false, errors.New("Choose one service command")
 			}
 			command, selected = arg, true
 		default:
-			return "", false, errors.New("Usage: pebril [serve|check|version] [--allow-low-memory]")
+			return "", false, errors.New("Usage: pebril [serve|check|version] [--allow-low-memory], or pebril reset-admin")
 		}
+	}
+	if command == "reset-admin" && len(args) != 1 {
+		return "", false, errors.New("Usage: pebril reset-admin (no additional arguments)")
 	}
 	return command, allow, nil
 }

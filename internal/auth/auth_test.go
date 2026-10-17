@@ -76,11 +76,11 @@ func TestInitializationAndCredentialBoundaries(t *testing.T) {
 	if !CheckCSRF(session.CSRF, session.CSRF) || CheckCSRF(randomText(t), session.CSRF) {
 		t.Fatal("CSRF comparison failed")
 	}
-	first, err := service.IssueToken(session.User.ID)
+	first, err := service.IssueToken(session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := service.IssueToken(session.User.ID)
+	second, err := service.IssueToken(session)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestInitializationAndCredentialBoundaries(t *testing.T) {
 	if _, err = db.DB.Exec("UPDATE users SET status='active' WHERE id=?", session.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = service.RevokeToken(session.User.ID); err != nil {
+	if err = service.RevokeToken(session); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = service.UploadUser(second); err == nil {

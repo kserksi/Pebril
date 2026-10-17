@@ -9,7 +9,7 @@ fail() { printf 'Pebril bootstrap: %s\n' "$*" >&2; exit 1; }
 note() { printf 'Pebril bootstrap: %s\n' "$*" >&2; }
 usage() {
     cat <<'HELP'
-Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [--allow-low-memory] [serve|check|version]
+Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [--allow-low-memory] [serve|check|version|reset-admin]
 
 Run as the ordinary service user. Deployment checks and dependency repair run
 before the service. --check (or check) validates without starting the service.
@@ -19,6 +19,8 @@ before the service. --check (or check) validates without starting the service.
 40% of system RAM: concurrency 1, AVIF conversion disabled. Check never serves.
 Without these options, interactive use asks before each kind of installation;
 noninteractive use stops when the next required action is not authorized.
+reset-admin resets the existing administrator offline with hidden terminal input;
+stop the service first. It accepts no other options and needs no native libraries.
 No authorization is saved. Existing valid libraries can be reused offline.
 HELP
 }
@@ -27,6 +29,7 @@ command_set=false
 allow_system=false
 allow_downloads=false
 allow_low_memory=false
+argument_count=$#
 while (($#)); do
     case "$1" in
         --help|-h) usage; exit 0 ;;
@@ -34,7 +37,7 @@ while (($#)); do
         --allow-system-install) allow_system=true ;;
         --allow-downloads) allow_downloads=true ;;
         --allow-low-memory) allow_low_memory=true ;;
-        serve|check|version)
+        serve|check|version|reset-admin)
             if $command_set && [[ "$command" != "$1" ]]; then fail 'Choose one command.'; fi
             command=$1; command_set=true ;;
         --) shift; (($# == 0)) || fail 'Extra arguments are not supported.'; break ;;
@@ -42,6 +45,7 @@ while (($#)); do
     esac
     shift
 done
+if [[ "$command" == reset-admin && "$argument_count" != 1 ]]; then fail 'reset-admin accepts no additional arguments.'; fi
 [[ "$EUID" != 0 ]] || fail 'Run as an unprivileged service user; only package installation may use sudo.'
 [[ $(uname -s) == Linux ]] || fail 'Linux is required.'
 script_path=$(readlink -f -- "${BASH_SOURCE[0]}") || fail 'Cannot resolve the launcher path.'
@@ -49,7 +53,7 @@ root=$(dirname -- "$script_path")
 service="$root/pebril"
 helper="$root/bin/pebril-runtime"
 [[ -x "$service" ]] || fail 'The sibling pebril executable is missing; use the extracted release directory.'
-if [[ "$command" == version ]]; then exec "$service" version; fi
+if [[ "$command" == version || "$command" == reset-admin ]]; then exec "$service" "$command"; fi
 [[ -x "$helper" ]] || fail 'bin/pebril-runtime is missing; extract the complete release package.'
 
 # Never source deployment configuration: dotenv values are data, not shell code.

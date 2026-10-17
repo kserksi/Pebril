@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -115,13 +116,16 @@ func (s *Service) Login(username, password string) (Session, error) {
 	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil || status != "active" {
 		return Session{}, ErrCredentials
 	}
-	user, err := s.DB.User(id)
-	if err != nil {
-		return Session{}, err
-	}
-	return s.NewSession(user)
+	return s.newSession(id, hash)
 }
 func (s *Service) NewSession(user store.User) (Session, error) {
+	var hash []byte
+	if err := s.DB.DB.QueryRow("SELECT password FROM users WHERE id=?", user.ID).Scan(&hash); err != nil {
+		return Session{}, err
+	}
+	return s.newSession(user.ID, hash)
+}
+func (s *Service) newSession(id int64, expectedHash []byte) (Session, error) {
 	token, err := Secret()
 	if err != nil {
 		return Session{}, err
@@ -136,11 +140,14 @@ func (s *Service) NewSession(user store.User) (Session, error) {
 		return Session{}, err
 	}
 	defer tx.Rollback()
-	var status string
-	if err = tx.QueryRow("SELECT status FROM users WHERE id=?", user.ID).Scan(&status); err != nil {
+	var user store.User
+	var hash []byte
+	err = tx.QueryRow("SELECT id,username,admin,status,quota,used,password FROM users WHERE id=?", id).Scan(&user.ID, &user.Username, &user.Admin, &user.Status, &user.Quota, &user.Used, &hash)
+	if err != nil {
 		return Session{}, err
 	}
-	if status != "active" {
+	// Recheck the verifier atomically so a concurrent reset cannot resurrect an old login.
+	if user.Status != "active" || !bytes.Equal(hash, expectedHash) {
 		return Session{}, ErrCredentials
 	}
 	if _, err = tx.Exec("DELETE FROM sessions WHERE expires<=?", time.Now().UnixMilli()); err != nil {
@@ -165,22 +172,29 @@ func (s *Service) Session(token string) (Session, error) {
 		return Session{}, ErrCredentials
 	}
 	user, err := s.DB.User(id)
-	return Session{User: user, CSRF: csrf, Expires: time.UnixMilli(expires)}, err
+	return Session{User: user, CSRF: csrf, Token: token, Expires: time.UnixMilli(expires)}, err
 }
 func (s *Service) Logout(token string) error {
 	_, err := s.DB.DB.Exec("DELETE FROM sessions WHERE hash=?", Digest(token))
 	return err
 }
-func (s *Service) IssueToken(user int64) (string, error) {
+func (s *Service) IssueToken(session Session) (string, error) {
 	token, err := Secret()
 	if err != nil {
 		return "", err
 	}
-	_, err = s.DB.DB.Exec("INSERT INTO upload_tokens(user_id,hash) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash", user, Digest(token))
+	result, err := s.DB.DB.Exec("INSERT INTO upload_tokens(user_id,hash) SELECT s.user_id,? FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.user_id=? AND s.expires>? AND u.status!='deleted' ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash", Digest(token), Digest(session.Token), session.User.ID, time.Now().UnixMilli())
+	if err != nil {
+		return "", err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n != 1 {
+		return "", ErrCredentials
+	}
 	return token, err
 }
-func (s *Service) RevokeToken(user int64) error {
-	_, err := s.DB.DB.Exec("DELETE FROM upload_tokens WHERE user_id=?", user)
+func (s *Service) RevokeToken(session Session) error {
+	_, err := s.DB.DB.Exec("DELETE FROM upload_tokens WHERE user_id=? AND EXISTS(SELECT 1 FROM sessions WHERE hash=? AND user_id=? AND expires>?)", session.User.ID, Digest(session.Token), session.User.ID, time.Now().UnixMilli())
 	return err
 }
 func (s *Service) UploadUser(token string) (store.User, error) {

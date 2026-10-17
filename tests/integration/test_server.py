@@ -55,6 +55,9 @@ def main():
             try:
                 status = wait_status(port, process)
                 assert status['sqlite'] and status['stage'] == 'conversion'
+                for route, asset in [('/', 'index.html'), ('/login', 'index.html'), ('/app.js', 'app.js'), ('/style.css', 'style.css')]:
+                    with urllib.request.urlopen(f'http://127.0.0.1:{port}' + route, timeout=2) as response:
+                        assert response.read() == (ROOT / 'internal/server/web' / asset).read_bytes(), 'Embedded account UI differs from current source'
                 revision = status['config_revision']
                 (root / 'replacement.json').write_text('{"static_quality":73}')
                 (root / 'replacement.json').replace(root / 'config.json')

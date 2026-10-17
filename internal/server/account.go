@@ -67,7 +67,7 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 		}
 		c.JSON(200, value)
 	})
-	for _, path := range []string{"initialize", "login"} {
+	for _, path := range []string{"initialize", "login", "register"} {
 		path := path
 		router.POST("/api/v1/"+path, func(c *gin.Context) {
 			if c.GetHeader("Authorization") != "" || !sameOrigin(c) {
@@ -78,22 +78,18 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 				Username string `json:"username"`
 				Password string `json:"password"`
 			}
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
-			decoder := json.NewDecoder(c.Request.Body)
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&credentials); err != nil || decoder.Decode(new(any)) != io.EOF {
+			if !accountBody(c, map[string]any{"username": &credentials.Username, "password": &credentials.Password}, true) {
 				c.JSON(400, gin.H{"error": "Invalid account request"})
 				return
 			}
 			var session auth.Session
 			var err error
 			if path == "initialize" {
-				var user store.User
-				user, err = service.Initialize(credentials.Username, credentials.Password)
-				if err == nil {
-					session, err = service.NewSession(user)
-				}
-			} else {
+				_, err = service.Initialize(credentials.Username, credentials.Password)
+			} else if path == "register" {
+				_, err = service.Register(credentials.Username, credentials.Password)
+			}
+			if err == nil {
 				session, err = service.Login(credentials.Username, credentials.Password)
 			}
 			if err != nil {
@@ -101,7 +97,7 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 				if errors.Is(err, auth.ErrInput) {
 					status, message = 400, err.Error()
 				}
-				if errors.Is(err, auth.ErrInitialized) {
+				if errors.Is(err, auth.ErrInitialized) || errors.Is(err, auth.ErrNotInitialized) || errors.Is(err, auth.ErrUsernameTaken) {
 					status, message = 409, err.Error()
 				}
 				if errors.Is(err, auth.ErrCredentials) {
@@ -129,20 +125,29 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 		c.JSON(200, gin.H{"signed_out": true})
 	}))
 	router.POST("/api/v1/upload-token", requireSession(service, true, func(session auth.Session, c *gin.Context) {
-		token, err := service.IssueToken(session.User.ID)
+		token, err := service.IssueToken(session)
 		if err != nil {
+			if errors.Is(err, auth.ErrCredentials) {
+				c.JSON(401, gin.H{"error": "Sign in is required"})
+				return
+			}
 			c.JSON(500, gin.H{"error": "Cannot issue upload token"})
 			return
 		}
 		c.JSON(201, gin.H{"token": token})
 	}))
 	router.DELETE("/api/v1/upload-token", requireSession(service, true, func(session auth.Session, c *gin.Context) {
-		if err := service.RevokeToken(session.User.ID); err != nil {
+		if err := service.RevokeToken(session); err != nil {
+			if errors.Is(err, auth.ErrCredentials) {
+				c.JSON(401, gin.H{"error": "Sign in is required"})
+				return
+			}
 			c.JSON(500, gin.H{"error": "Cannot revoke upload token"})
 			return
 		}
 		c.JSON(200, gin.H{"revoked": true})
 	}))
+	administrationRoutes(router, service)
 	if upload == nil {
 		return
 	}
@@ -199,4 +204,33 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 	}))
 	router.GET("/image/:id", func(c *gin.Context) { publicImage(upload, false, c) })
 	router.GET("/image/:id/cover", func(c *gin.Context) { publicImage(upload, true, c) })
+}
+
+// accountBody enforces exact JSON field names and rejects ambiguous duplicate/null input.
+func accountBody(c *gin.Context, fields map[string]any, requireAll bool) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
+	decoder := json.NewDecoder(c.Request.Body)
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return false
+	}
+	seen := make(map[string]bool, len(fields))
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return false
+		}
+		key, ok := token.(string)
+		target, allowed := fields[key]
+		if !ok || !allowed || seen[key] {
+			return false
+		}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil || string(value) == "null" || json.Unmarshal(value, target) != nil {
+			return false
+		}
+		seen[key] = true
+	}
+	token, err = decoder.Token()
+	return err == nil && token == json.Delim('}') && decoder.Decode(new(any)) == io.EOF && len(seen) > 0 && (!requireAll || len(seen) == len(fields))
 }

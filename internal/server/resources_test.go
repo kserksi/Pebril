@@ -141,7 +141,7 @@ func TestResourceHTTPBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bearer, err := authentication.IssueToken(admin.User.ID)
+	bearer, err := authentication.IssueToken(admin)
 	if err != nil {
 		t.Fatal(err)
 	}

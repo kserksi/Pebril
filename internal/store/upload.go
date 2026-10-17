@@ -18,6 +18,7 @@ type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	Admin    bool   `json:"admin"`
+	Status   string `json:"status"`
 	Quota    int64  `json:"quota"`
 	Used     int64  `json:"used"`
 }
@@ -162,7 +163,7 @@ func (s *Store) ReceivedUploads() ([]string, error) {
 }
 func (s *Store) User(id int64) (User, error) {
 	var u User
-	err := s.DB.QueryRow("SELECT id,username,admin,quota,used FROM users WHERE id=?", id).Scan(&u.ID, &u.Username, &u.Admin, &u.Quota, &u.Used)
+	err := s.DB.QueryRow("SELECT id,username,admin,status,quota,used FROM users WHERE id=?", id).Scan(&u.ID, &u.Username, &u.Admin, &u.Status, &u.Quota, &u.Used)
 	return u, err
 }
 func (s *Store) ObjectReferenced(hash string) bool {
