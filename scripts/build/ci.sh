@@ -27,6 +27,7 @@ node --check internal/server/web/app.js
 node tests/web/test_uploads.mjs
 node tests/web/test_accounts.mjs
 python3 tests/packaging/test_ci.py
+python3 tests/packaging/test_release.py
 python3 tests/integration/test_bootstrap.py
 python3 tests/integration/test_server.py
 python3 tests/integration/test_accounts.py

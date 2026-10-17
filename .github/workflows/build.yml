@@ -1,4 +1,4 @@
-name: Build and test
+name: Build, test and release
 
 on:
   push:
@@ -51,3 +51,29 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+  prerelease:
+    needs: linux-amd64
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download checked package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: gh run download "$RUN_ID" --name "pebril-linux-amd64-$RUN_ID-$RUN_ATTEMPT" --dir .build/release
+      - name: Publish development prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: python3 scripts/build/release.py --artifacts .build/release --commit "$SOURCE_COMMIT" --version "$(cat VERSION)" --repo "$GH_REPO"
