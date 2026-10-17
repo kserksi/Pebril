@@ -24,10 +24,19 @@ import (
 
 var ErrTooLarge = errors.New("Upload exceeds configured byte limit")
 var ErrEmpty = errors.New("Upload is empty")
+var ErrOriginalDownloadDisabled = errors.New("Original download is disabled")
 var ErrResourceCooldown = errors.New("Processing is cooling down; try uploading again after resources recover")
 
 type ResourceState interface {
 	State() resources.State
+}
+
+type uploadJob struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	reception   sync.Mutex
+	closeSource func() error
+	done        chan struct{}
 }
 
 type Service struct {
@@ -44,6 +53,7 @@ type Service struct {
 	objects    sync.Mutex
 	lifecycle  sync.Mutex
 	closing    bool
+	uploads    map[string]*uploadJob
 	queue      conversionQueue
 }
 
@@ -53,7 +63,7 @@ func New(db *store.Store, m *config.Manager, d config.Deployment, executable str
 
 func NewWithResources(db *store.Store, m *config.Manager, d config.Deployment, executable string, capability nativeprobe.Result, monitor ResourceState) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{Resources: monitor, DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
+	s := &Service{Resources: monitor, DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), uploads: map[string]*uploadJob{}, queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
 	for _, dir := range []string{s.incoming(), s.objectDir()} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			cancel()
@@ -170,6 +180,7 @@ func (s *Service) incoming() string         { return filepath.Join(s.Deployment.
 func (s *Service) objectDir() string        { return filepath.Join(s.Deployment.PublicDir, ".objects") }
 func (s *Service) scratch(id string) string { return filepath.Join(s.incoming(), id) }
 func validID(id string) bool                { b, e := hex.DecodeString(id); return e == nil && len(b) == 16 }
+func validHash(hash string) bool            { b, e := hex.DecodeString(hash); return e == nil && len(b) == 32 }
 func NewID() (string, error) {
 	var b [16]byte
 	_, err := rand.Read(b[:])
@@ -177,7 +188,7 @@ func NewID() (string, error) {
 }
 
 // Receive keeps unverified bytes outside image storage and never trusts supplied filenames.
-func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, error)) (store.Image, <-chan struct{}, error) {
+func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, error), cancelSource func() error) (store.Image, <-chan struct{}, error) {
 	s.lifecycle.Lock()
 	if s.closing {
 		s.lifecycle.Unlock()
@@ -194,6 +205,20 @@ func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, err
 	if err != nil {
 		return store.Image{}, nil, err
 	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	job := &uploadJob{ctx: ctx, cancel: cancel, closeSource: cancelSource, done: make(chan struct{})}
+	s.lifecycle.Lock()
+	s.uploads[id] = job
+	s.lifecycle.Unlock()
+	started := false
+	defer func() {
+		job.reception.Lock()
+		job.closeSource = nil
+		job.reception.Unlock()
+		if !started {
+			s.finishUpload(id, job)
+		}
+	}()
 	policy := s.Manager.Snapshot()
 	if err = s.DB.AcceptUpload(id, user, policy); err != nil {
 		return store.Image{}, nil, err
@@ -208,7 +233,25 @@ func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, err
 	if err != nil {
 		return fail(err)
 	}
-	defer source.Close()
+	job.reception.Lock()
+	if cancelSource == nil {
+		job.closeSource = source.Close
+	}
+	job.reception.Unlock()
+	var sourceClosed sync.Once
+	closeReception := func() {
+		sourceClosed.Do(func() {
+			_ = source.Close()
+			job.reception.Lock()
+			job.closeSource = nil
+			job.reception.Unlock()
+		})
+	}
+	defer closeReception()
+	cancelled := job.ctx.Err()
+	if cancelled != nil {
+		return fail(cancelled)
+	}
 	if err = os.Mkdir(s.scratch(id), 0700); err != nil {
 		return fail(err)
 	}
@@ -247,25 +290,34 @@ func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, err
 	if err = s.DB.Received(id); err != nil {
 		return fail(err)
 	}
+	closeReception()
 	done := s.start(id, false)
+	started = true
 	image, err := s.DB.Image(id)
 	return image, done, err
 }
 func (s *Service) start(id string, restored bool) <-chan struct{} {
-	done := make(chan struct{})
+	s.lifecycle.Lock()
+	job := s.uploads[id]
+	if job == nil {
+		ctx, cancel := context.WithCancel(s.ctx)
+		job = &uploadJob{ctx: ctx, cancel: cancel, done: make(chan struct{})}
+		s.uploads[id] = job
+	}
 	s.workers.Add(1)
+	s.lifecycle.Unlock()
 	go func() {
 		defer s.workers.Done()
-		defer close(done)
+		defer s.finishUpload(id, job)
 		select {
 		case s.semaphore <- struct{}{}:
 			defer func() { <-s.semaphore }()
-		case <-s.ctx.Done():
+		case <-job.ctx.Done():
 			return
 		}
-		if err := s.validate(id); err != nil {
+		if err := s.validate(job.ctx, id); err != nil {
 			// A shutdown leaves fully received input durable for restart restoration.
-			if s.ctx.Err() != nil {
+			if job.ctx.Err() != nil {
 				return
 			}
 			if restored && s.Deployment.Restricted && errors.Is(err, nativeprobe.ErrAVIFDisabled) {
@@ -287,9 +339,19 @@ func (s *Service) start(id string, restored bool) <-chan struct{} {
 			os.RemoveAll(s.scratch(id))
 		}
 	}()
-	return done
+	return job.done
 }
-func (s *Service) validate(id string) error {
+func (s *Service) finishUpload(id string, job *uploadJob) {
+	s.lifecycle.Lock()
+	delete(s.uploads, id)
+	job.cancel()
+	close(job.done)
+	s.lifecycle.Unlock()
+}
+func (s *Service) validate(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	image, err := s.DB.Image(id)
 	if err != nil {
 		return err
@@ -305,7 +367,7 @@ func (s *Service) validate(id string) error {
 	if err = os.WriteFile(policyPath, data, 0600); err != nil {
 		return err
 	}
-	result, err := nativeprobe.Verify(s.ctx, s.Executable, s.Capability.VipsPath, filepath.Join(s.Deployment.NativeDir, "libpebril_native.so"), input, output, policyPath, !s.Deployment.Restricted)
+	result, err := nativeprobe.Verify(ctx, s.Executable, s.Capability.VipsPath, filepath.Join(s.Deployment.NativeDir, "libpebril_native.so"), input, output, policyPath, !s.Deployment.Restricted)
 	if err != nil {
 		return err
 	}
@@ -345,6 +407,9 @@ func (s *Service) validate(id string) error {
 	}
 	s.objects.Lock()
 	defer s.objects.Unlock()
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 	target := filepath.Join(s.objectDir(), digest)
 	staged, err := os.CreateTemp(s.objectDir(), ".object-")
 	if err != nil {

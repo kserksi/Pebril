@@ -21,6 +21,7 @@ const PasswordCost = 12
 const SessionLifetime = 7 * 24 * time.Hour
 
 var ErrCredentials = errors.New("Invalid username or password")
+var ErrBanned = errors.New("This account is banned. New sign-ins and uploads are disabled")
 var ErrInitialized = errors.New("Site is already initialized")
 var ErrInput = errors.New("Username must contain 1 to 64 bytes without surrounding whitespace or control characters; password must contain 1 to 72 bytes")
 
@@ -104,8 +105,7 @@ func (s *Service) Initialize(username, password string) (store.User, error) {
 func (s *Service) Login(username, password string) (Session, error) {
 	var id int64
 	var hash []byte
-	var status string
-	err := s.DB.DB.QueryRow("SELECT id,password,status FROM users WHERE username=?", username).Scan(&id, &hash, &status)
+	err := s.DB.DB.QueryRow("SELECT id,password FROM users WHERE username=?", username).Scan(&id, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		_ = bcrypt.CompareHashAndPassword(s.dummy, []byte(password))
 		return Session{}, ErrCredentials
@@ -113,7 +113,7 @@ func (s *Service) Login(username, password string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil || status != "active" {
+	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
 		return Session{}, ErrCredentials
 	}
 	return s.newSession(id, hash)
@@ -147,7 +147,13 @@ func (s *Service) newSession(id int64, expectedHash []byte) (Session, error) {
 		return Session{}, err
 	}
 	// Recheck the verifier atomically so a concurrent reset cannot resurrect an old login.
-	if user.Status != "active" || !bytes.Equal(hash, expectedHash) {
+	if !bytes.Equal(hash, expectedHash) {
+		return Session{}, ErrCredentials
+	}
+	if user.Status == "banned" {
+		return Session{}, ErrBanned
+	}
+	if user.Status != "active" {
 		return Session{}, ErrCredentials
 	}
 	if _, err = tx.Exec("DELETE FROM sessions WHERE expires<=?", time.Now().UnixMilli()); err != nil {

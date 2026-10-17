@@ -25,6 +25,7 @@ type conversionJob struct {
 	cancel   context.CancelFunc
 	started  time.Time
 	stopping bool
+	done     chan struct{}
 }
 type conversionQueue struct {
 	mu   sync.Mutex
@@ -109,9 +110,10 @@ func (s *Service) startScheduler() error {
 				}
 				lastUser = image.UserID
 				ctx, cancel := context.WithCancel(s.ctx)
-				s.queue.jobs[id] = &conversionJob{cancel: cancel, started: time.Now()}
+				done := make(chan struct{})
+				s.queue.jobs[id] = &conversionJob{cancel: cancel, started: time.Now(), done: done}
 				s.workers.Add(1)
-				go s.runConversion(ctx, cancel, image)
+				go s.runConversion(ctx, cancel, image, done)
 			}
 			s.queue.mu.Unlock()
 		}
@@ -119,7 +121,7 @@ func (s *Service) startScheduler() error {
 	s.signalConversion()
 	return nil
 }
-func (s *Service) runConversion(ctx context.Context, cancel context.CancelFunc, image store.Image) {
+func (s *Service) runConversion(ctx context.Context, cancel context.CancelFunc, image store.Image, done chan struct{}) {
 	defer s.workers.Done()
 	defer cancel()
 	defer func() {
@@ -130,6 +132,7 @@ func (s *Service) runConversion(ctx context.Context, cancel context.CancelFunc, 
 			}
 		}
 		delete(s.queue.jobs, image.ID)
+		close(done)
 		s.queue.mu.Unlock()
 		s.signalConversion()
 	}()
@@ -158,7 +161,7 @@ func (s *Service) runConversion(ctx context.Context, cancel context.CancelFunc, 
 }
 
 func (s *Service) collectObject(hash string) {
-	if len(hash) == 64 && !s.DB.ObjectReferenced(hash) {
+	if validHash(hash) && !s.DB.ObjectReferenced(hash) {
 		if err := os.Remove(filepath.Join(s.objectDir(), hash)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("Cannot remove unreferenced image object")
 		}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -120,14 +121,27 @@ func (s *Store) SaveUpload(image Image) error {
 	return tx.Commit()
 }
 func (s *Store) Image(id string) (Image, error) {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return Image{}, err
+	}
+	defer tx.Rollback()
+	i, err := readImage(tx, id)
+	if err != nil {
+		return i, err
+	}
+	return i, tx.Commit()
+}
+
+func readImage(tx *sql.Tx, id string) (Image, error) {
 	var i Image
 	var policy []byte
-	err := s.DB.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary)
+	err := tx.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary)
 	if err != nil {
 		return i, err
 	}
 	err = json.Unmarshal(policy, &i.Policy)
-	files, e := s.Files(id)
+	files, e := readFiles(tx, id)
 	if e != nil {
 		return i, e
 	}

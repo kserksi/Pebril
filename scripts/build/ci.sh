@@ -26,6 +26,7 @@ bash -n scripts/build.sh scripts/pebril.sh scripts/build/ci.sh
 node --check internal/server/web/app.js
 node tests/web/test_uploads.mjs
 node tests/web/test_accounts.mjs
+node tests/web/test_gallery.mjs
 python3 tests/packaging/test_ci.py
 python3 tests/packaging/test_release.py
 python3 tests/integration/test_bootstrap.py
@@ -34,6 +35,7 @@ python3 tests/integration/test_accounts.py
 python3 tests/integration/test_admin_reset.py
 python3 tests/integration/test_uploads.py
 python3 tests/integration/test_conversion.py
+python3 tests/integration/test_gallery.py
 python3 tests/integration/test_resources.py
 rust_notices="$(rustc --print sysroot)/share/doc/rust"
 mkdir -p "$PEBRIL_BUILD_OUTPUT/third-party/rust-standard-library"

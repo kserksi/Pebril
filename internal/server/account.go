@@ -93,6 +93,10 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 				session, err = service.Login(credentials.Username, credentials.Password)
 			}
 			if err != nil {
+				if errors.Is(err, auth.ErrBanned) {
+					c.JSON(403, gin.H{"error": err.Error(), "code": "account_banned"})
+					return
+				}
 				status, message := 500, "Account operation failed"
 				if errors.Is(err, auth.ErrInput) {
 					status, message = 400, err.Error()
@@ -151,6 +155,7 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 	if upload == nil {
 		return
 	}
+	galleryRoutes(router, service, upload)
 	router.POST("/api/v1/uploads", func(c *gin.Context) {
 		var user store.User
 		var err error

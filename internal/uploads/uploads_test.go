@@ -53,7 +53,7 @@ func TestShutdownTracksReceptionAndKeepsCompleteInput(t *testing.T) {
 	if _, _, err = service.Receive(user, func(int64) (io.ReadCloser, error) {
 		t.Fatal("Quota rejection read the upload request")
 		return nil, nil
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("Upload was admitted with an exhausted quota")
 	}
 	if _, err = db.DB.Exec("UPDATE users SET used=0 WHERE id=?", user); err != nil {
@@ -62,7 +62,7 @@ func TestShutdownTracksReceptionAndKeepsCompleteInput(t *testing.T) {
 	reader := &blockedReader{entered: make(chan struct{}), release: make(chan struct{}), source: strings.NewReader("received input")}
 	received := make(chan error, 1)
 	go func() {
-		_, _, e := service.Receive(user, func(int64) (io.ReadCloser, error) { return io.NopCloser(reader), nil })
+		_, _, e := service.Receive(user, func(int64) (io.ReadCloser, error) { return io.NopCloser(reader), nil }, nil)
 		received <- e
 	}()
 	<-reader.entered
@@ -84,7 +84,7 @@ func TestShutdownTracksReceptionAndKeepsCompleteInput(t *testing.T) {
 	if _, _, err = service.Receive(user, func(int64) (io.ReadCloser, error) {
 		t.Fatal("Stopping service opened a new upload source")
 		return nil, nil
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("New reception started during shutdown")
 	}
 	select {

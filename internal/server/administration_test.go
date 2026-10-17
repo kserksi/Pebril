@@ -203,7 +203,22 @@ func TestRegistrationAndAdministration(t *testing.T) {
 	check(request("POST", "/api/v1/uploads", "", anonymous, "", token), 429)
 	check(request("POST", "/api/v1/uploads", "", member, origin, ""), 429)
 	check(request("PATCH", memberPath, `{"quota":0,"status":"banned"}`, admin, origin, ""), 200)
-	check(request("POST", "/api/v1/login", credentials(username, password), anonymous, origin, ""), 401)
+	bannedLogin := request("POST", "/api/v1/login", credentials(username, password), anonymous, origin, "")
+	check(bannedLogin, 403)
+	var bannedError struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err = json.Unmarshal(bannedLogin.Body.Bytes(), &bannedError); err != nil || bannedError.Code != "account_banned" || !strings.Contains(bannedError.Error, "banned") || len(bannedLogin.Result().Cookies()) != 0 {
+		t.Fatal("Banned login did not return a clear status without issuing a session", bannedError, err)
+	}
+	for _, login := range []struct{ username, password string }{{username, "wrong" + password}, {"unknown" + username, password}} {
+		failure := request("POST", "/api/v1/login", credentials(login.username, login.password), anonymous, origin, "")
+		check(failure, 401)
+		if strings.Contains(failure.Body.String(), "banned") || len(failure.Result().Cookies()) != 0 {
+			t.Fatal("Invalid credentials disclosed banned status or issued a session")
+		}
+	}
 	check(request("POST", "/api/v1/uploads", "", anonymous, "", token), 401)
 	check(request("POST", "/api/v1/uploads", "", member, origin, ""), 403)
 	browse := request("GET", "/api/v1/account", "", member, "", "")

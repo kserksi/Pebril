@@ -220,7 +220,8 @@ def main():
                 ordinary.upload(fixtures['png'],token=token,expected=401)
                 update("UPDATE users SET status='banned' WHERE id=?",(ordinary_id,))
                 ordinary.upload(svg,expected=403)
-                ordinary.request('/api/v1/login','POST',{'username':credentials['user'],'password':credentials['password']},expected=401)
+                banned = ordinary.request('/api/v1/login','POST',{'username':credentials['user'],'password':credentials['password']},expected=403)[0]
+                assert banned['code'] == 'account_banned' and 'banned' in banned['error']
                 update("UPDATE users SET status='active' WHERE id=?",(ordinary_id,))
                 used = admin.request('/api/v1/account')[0]['user']['used']
                 update('UPDATE users SET quota=? WHERE id=?',(used+1,admin_id))

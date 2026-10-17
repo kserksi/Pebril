@@ -164,9 +164,20 @@ func TestResetRevokesAllCredentialsAndRejectsStaleLoginAndTokenIssuance(t *testi
 	if _, err = service.UploadUser(token); !errors.Is(err, ErrCredentials) {
 		t.Fatal("Reset preserved upload token", err)
 	}
-	// A login that verified the old hash before the reset must not publish a later session.
+	status := "banned"
+	if _, err = service.DB.UpdateUser(admin.ID, user.ID, &status, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A reset followed by a ban must not reveal status to a stale password verifier.
 	if _, err = service.newSession(user.ID, verifiedHash); !errors.Is(err, ErrCredentials) {
-		t.Fatal("Stale password verification resurrected a session", err)
+		t.Fatal("Stale password verification resurrected a session or revealed a ban", err)
+	}
+	if _, err = service.Login(username, newPassword); !errors.Is(err, ErrBanned) {
+		t.Fatal("Current password did not report banned status", err)
+	}
+	status = "active"
+	if _, err = service.DB.UpdateUser(admin.ID, user.ID, &status, nil); err != nil {
+		t.Fatal(err)
 	}
 	if _, err = service.Login(username, password); !errors.Is(err, ErrCredentials) {
 		t.Fatal("Old password accepted", err)

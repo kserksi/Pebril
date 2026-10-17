@@ -99,8 +99,17 @@ func TestInitializationAndCredentialBoundaries(t *testing.T) {
 	if _, err = service.UploadUser(second); err == nil {
 		t.Fatal("Banned account can upload")
 	}
-	if _, err = service.Login(username, password); err == nil {
-		t.Fatal("Banned account can log in")
+	if _, err = service.Login(username, password); !errors.Is(err, ErrBanned) {
+		t.Fatal("Verified banned login did not report the ban", err)
+	}
+	if _, err = service.Login(username, randomText(t)); !errors.Is(err, ErrCredentials) {
+		t.Fatal("Wrong password revealed banned status", err)
+	}
+	if _, err = service.Login(randomText(t), password); !errors.Is(err, ErrCredentials) {
+		t.Fatal("Unknown username did not return generic credentials failure", err)
+	}
+	if _, err = service.newSession(session.User.ID, hash); !errors.Is(err, ErrBanned) {
+		t.Fatal("Ban after password verification did not prevent session creation", err)
 	}
 	if _, err = db.DB.Exec("UPDATE users SET status='active' WHERE id=?", session.User.ID); err != nil {
 		t.Fatal(err)

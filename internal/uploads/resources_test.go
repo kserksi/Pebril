@@ -99,7 +99,7 @@ func TestResourceCooldownRejectsBeforeBodyAndRecord(t *testing.T) {
 	if _, _, err := s.Receive(user, func(int64) (io.ReadCloser, error) {
 		t.Error("cooldown opened the request body")
 		return io.NopCloser(strings.NewReader("unused")), nil
-	}); !errors.Is(err, ErrResourceCooldown) {
+	}, nil); !errors.Is(err, ErrResourceCooldown) {
 		t.Fatalf("cooldown rejection: %v", err)
 	}
 	var count int
@@ -128,7 +128,7 @@ func TestResourceCooldownPreservesAcceptedReception(t *testing.T) {
 	}
 	received := make(chan result, 1)
 	go func() {
-		image, done, err := s.Receive(user, func(int64) (io.ReadCloser, error) { return io.NopCloser(reader), nil })
+		image, done, err := s.Receive(user, func(int64) (io.ReadCloser, error) { return io.NopCloser(reader), nil }, nil)
 		received <- result{image, done, err}
 	}()
 	select {

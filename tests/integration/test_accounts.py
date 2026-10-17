@@ -125,7 +125,14 @@ def main():
                     token = member.request('/api/v1/upload-token', 'POST', expected=201)[0]['token']
                     member.upload(png(), expected=403)
                     member.upload(png(), expected=401, token=token)
-                    Client(origin).request('/api/v1/login', 'POST', member_credentials, expected=401)
+                    banned_login = Client(origin)
+                    failure, headers = banned_login.request('/api/v1/login', 'POST', member_credentials, expected=403)
+                    assert failure['code'] == 'account_banned' and 'banned' in failure['error']
+                    assert not banned_login.jar and 'Set-Cookie' not in headers
+                    for credentials in (dict(member_credentials, password=secrets.token_urlsafe(24)),
+                                        dict(member_credentials, username=secrets.token_hex(8))):
+                        failure = Client(origin).request('/api/v1/login', 'POST', credentials, expected=401)[0]
+                        assert 'banned' not in failure['error'] and 'code' not in failure
                     assert hashlib.sha256(member.request(completed['url'])[0]).digest() == original_hash
                     connection.send(payload[split:])
                     response = connection.getresponse()

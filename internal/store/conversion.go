@@ -32,7 +32,13 @@ func LogicalBytes(files []ImageFile) int64 {
 	return total
 }
 func (s *Store) Files(id string) ([]ImageFile, error) {
-	rows, err := s.DB.Query("SELECT role,hash,bytes,format,width,height,frames FROM image_files WHERE image_id=?", id)
+	return readFiles(s.DB, id)
+}
+
+func readFiles(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, id string) ([]ImageFile, error) {
+	rows, err := q.Query("SELECT role,hash,bytes,format,width,height,frames FROM image_files WHERE image_id=? ORDER BY role", id)
 	if err != nil {
 		return nil, err
 	}

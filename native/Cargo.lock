@@ -162,7 +162,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "pebril-native"
-version = "0.0.7-dev"
+version = "0.0.8-dev"
 dependencies = [
  "gif",
  "svg-hush",

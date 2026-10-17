@@ -6,6 +6,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kserksi/Pebril/internal/store"
@@ -39,6 +41,14 @@ func (s *singleFile) Read(p []byte) (int, error) {
 func (s *singleFile) Close() error { return s.part.Close() }
 
 func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
+	body := c.Request.Body
+	var reception sync.Mutex
+	active := true
+	defer func() {
+		reception.Lock()
+		active = false
+		reception.Unlock()
+	}()
 	image, done, err := service.Receive(user.ID, func(maximum int64) (io.ReadCloser, error) {
 		if maximum > int64(^uint64(0)>>1)-65536 {
 			return nil, errors.New("Upload byte limit is too large")
@@ -56,6 +66,17 @@ func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
 			return nil, errors.New("A single file field named file is required")
 		}
 		return &singleFile{part: part, reader: reader}, nil
+	}, func() error {
+		reception.Lock()
+		defer reception.Unlock()
+		if !active {
+			return nil
+		}
+		// Unblock reception without applying a deadline to a later keepalive request.
+		controller := http.NewResponseController(c.Writer)
+		_ = controller.SetReadDeadline(time.Now())
+		defer controller.SetReadDeadline(time.Time{})
+		return body.Close()
 	})
 	if err != nil {
 		status := 400
