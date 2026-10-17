@@ -62,9 +62,10 @@ __pycache__/
 /docs/
 /third-party/*.txt
 
-# Only the root README is public Markdown documentation
+# Public Markdown is limited to the root README and known-issues tracker
 *.md
 !/README.md
+!/KNOWN_ISSUES.md
 
 # Cargo output from direct native-module builds
 /native/target/
