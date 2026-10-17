@@ -26,11 +26,11 @@ The complete image host is still under development. Current releases are suitabl
 | Image conversion | Validate uploads and prepare suitable output formats. |
 | Online sharing | Provide links with the image's access rules. |
 
-Conversion and public result links are available. Full gallery management and private sharing remain planned.
+Conversion, public result links, and basic gallery management are available. Private sharing and batch gallery management remain planned.
 
 ## What is available today?
 
-The `dev` branch is at **0.0.6-dev**, adding resource-aware processing and operational warnings. The latest published prerelease remains [0.0.5-dev](https://github.com/kserksi/Pebril/releases/tag/v0.0.5-dev).
+The `dev` branch is at **0.0.8-dev**, with ordinary account registration/administration and a basic gallery. The latest published prerelease is [0.0.8-dev](https://github.com/kserksi/Pebril/releases/tag/v0.0.8-dev).
 
 | Capability | Current status |
 |---|---|
@@ -41,11 +41,15 @@ The `dev` branch is at **0.0.6-dev**, adding resource-aware processing and opera
 | Animation and SVG | Animated WebP/GIF, WebP covers, and sanitized SVG delivery |
 | Processing feedback and sharing | Status polling, retries, public results, and ordered URL/Markdown copying |
 | Runtime setup | Independent Bash launcher, consented downloads, offline reuse, and component recovery |
-| Registration, full account administration, gallery, and original downloads | Planned; unavailable |
+| Ordinary accounts | Registration, account status, and administrator controls for ordinary-user status, quota, and password reset |
+| Basic gallery | Paginated owner/administrator views, image details, and individual deletion |
+| Original downloads | Authenticated owner/administrator downloads when enabled and an original is retained |
+| Email, self-service password recovery, and account deletion/export | Planned; unavailable |
+| Batch gallery management | Planned; unavailable |
 | Resource controls | Memory-based concurrency, restricted startup, and administrator warnings |
 | Private sharing and PicGo integration | Planned; unavailable |
 
-Official system-package installation remains pending. [Issue #20](https://github.com/kserksi/Pebril/issues/20) tracks the remaining deployment work.
+Official system-package installation and recovery validation remain pending.
 
 ## Where is the project heading?
 
@@ -59,8 +63,8 @@ Download the Linux x64 archive and `SHA256SUMS` from Releases. Verify and extrac
 
 ```bash
 sha256sum -c SHA256SUMS
-tar -xzf pebril-*-linux-amd64.tar.gz
-cd pebril-*-linux-amd64
+tar -xzf pebril-*-linux-amd64-*.tar.gz
+cd pebril-*-linux-amd64-*
 ./pebril.sh version
 ./pebril.sh --check
 ./pebril.sh
@@ -80,7 +84,7 @@ If the detected program memory ceiling is below 40% of system memory, startup re
 
 The package requires Linux x64, glibc >=2.34, compatible system C/C++ runtimes, Bash, coreutils, and flock. Downloaded runtimes also require SSSE3, SSE4.1, SSE4.2, and POPCNT. Downloads need HTTPS access, trusted CA certificates, and a library directory owned by the service user and not writable by others. Deployment requires no compilers; valid runtimes can be reused offline.
 
-The default address is `127.0.0.1:8080`. `/` and `/login` show the basic account/upload page; `/healthz` and `/api/v1/status` provide service status. On first deployment, initialize the administrator, sign in, and select images. No default account or password is supplied.
+The default address is `127.0.0.1:8080`. `/` and `/login` show the basic account, upload, and gallery page; `/healthz` and `/api/v1/status` provide service status. On first deployment, initialize the administrator. Ordinary users can then register and sign in to upload and manage their images. Administrators can manage ordinary users and inspect their images. No default account or password is supplied.
 
 PNG, JPEG, GIF, WebP, and SVG uploads are supported when enabled. AVIF requires deployment capability and its format switch; APNG is rejected. Raster uploads convert asynchronously to WebP at original dimensions and quality 80 by default. Originals are retained, animation receives a separate cover, and SVG is sanitized without rasterization. Configured resizing preserves aspect ratio without enlargement. Transparent JPEG output uses white.
 
@@ -100,9 +104,11 @@ Shared pages may be counted repeatedly, causing earlier degradation. Filesystems
 
 ## Build and checks
 
-With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days; Releases are published separately.
+With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days. For new development versions, successful `dev` pushes also publish prereleases; pull requests and `main` do not publish Releases.
 
-Checks cover Go build/vet/race with `nomsgpack,image_worker` tags, Rust, JavaScript logic, uploads/conversion, and bootstrap behavior. Integration scripts are in `tests/integration/`; pinned Linux userspace checks are in `tests/compatibility/`. Bootstrap tests use explicit helper doubles for authorization paths. Debian 12, Ubuntu 22.04, and Rocky Linux 9.8 userspace checks share one kernel; they do not establish independent-machine compatibility. Resource checks cover startup consent, concurrency and cooldown, AVIF task recovery, and administrator-only warnings. Low-memory integration uses controlled memory metadata, not an enforced memory quota. Real privileged installation, representative memory-pressure benchmarks, and full-product acceptance remain open.
+For each release, synchronize this README's version, release/download links, available capabilities, and remaining scope before building and pushing. Verify the packaged README matches the approved source, then check the live README and release links after publication. Do not claim an unpublished version is available. Published tags and assets remain unchanged when correcting documentation.
+
+Checks cover Go build/vet/race with `nomsgpack,image_worker` tags, Rust, JavaScript logic, accounts/gallery, uploads/conversion, and bootstrap behavior. Integration scripts are in `tests/integration/`; pinned Linux userspace checks are in `tests/compatibility/`. Bootstrap tests use explicit helper doubles for authorization paths. Debian 12, Ubuntu 22.04, and Rocky Linux 9.8 userspace checks share one kernel; they do not establish independent-machine compatibility. Resource checks cover startup consent, concurrency and cooldown, AVIF task recovery, and administrator-only warnings. Low-memory integration uses controlled memory metadata, not an enforced memory quota. Real privileged installation, representative memory-pressure benchmarks, and full-product acceptance remain open.
 
 ## Repository layout
 
