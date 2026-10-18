@@ -61,7 +61,8 @@ try {
   assert(ready, 'Isolated service readiness timeout');
   browser = await chromium.launch({headless: true});
   const adminContext = await browser.newContext(), memberContext = await browser.newContext(), secondaryContext = await browser.newContext();
-  const admin = await adminContext.newPage(), page = await memberContext.newPage(), secondary = await secondaryContext.newPage();
+  const admin = await adminContext.newPage(), secondary = await secondaryContext.newPage();
+  let page = await memberContext.newPage();
   for (const candidate of [admin, page, secondary]) candidate.on('pageerror', error => pageErrors.push(error.message));
   // Freeze only the secondary page's timers, to deterministically test request-driven 401 handling.
   await secondary.clock.install(); await secondary.clock.pauseAt(new Date());
@@ -123,6 +124,39 @@ try {
   await wait(admin, () => document.querySelector('#gallery-images').children.length === 20);
   assert.match(await admin.locator('#gallery-images > li').first().innerText(), /Owner:/);
 
+  // Completed-upload links preserve the batch page, independently of gallery links.
+  const uploadPopupPromise = page.waitForEvent('popup');
+  await page.locator('#upload-results a').first().click();
+  const uploadPopup = await uploadPopupPromise; await uploadPopup.waitForLoadState();
+  assert.equal(await uploadPopup.evaluate(() => window.opener === null), true);
+  assert.equal(page.url(), origin + '/'); await uploadPopup.close();
+
+  // A failed reception survives reopening; retry requires the same original file.
+  const recoveryFile = path.join(temporary, 'recovery.svg'); await fs.writeFile(recoveryFile, svg);
+  await page.route('**/api/v1/uploads', route => route.abort('connectionfailed'), {times: 1});
+  await page.locator('#files').setInputFiles(recoveryFile); await page.locator('#upload').click();
+  await wait(page, () => document.querySelector('#upload-results').lastElementChild.textContent.includes('outcome is unknown'));
+  const storageKey = `pebril-upload-failures-${memberID}`;
+  assert.deepEqual(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).map(value => value.name), storageKey), ['invalid.gif', 'recovery.svg']);
+  await page.close();
+  const recovered = await memberContext.newPage(); recovered.on('pageerror', error => pageErrors.push(error.message));
+  await recovered.goto(origin);
+  await wait(recovered, () => document.querySelector('#upload-history').children.length === 2);
+  const recoveryRow = recovered.locator('#upload-history > li').filter({hasText: 'recovery.svg'});
+  await recoveryRow.getByRole('button', {name: 'Retry upload from zero'}).click();
+  assert.match(await recoveryRow.innerText(), /Select the original file/);
+  await recoveryRow.locator('input[type="file"]').setInputFiles(recoveryFile);
+  await recoveryRow.getByRole('button', {name: 'Retry upload from zero'}).click();
+  await wait(recovered, () => Array.from(document.querySelector('#upload-history').children).find(node => node.textContent.includes('recovery.svg')).textContent.includes('100% ready'));
+  assert.deepEqual(await recovered.evaluate(key => JSON.parse(localStorage.getItem(key)).map(value => value.name), storageKey), ['invalid.gif']);
+  await recovered.reload();
+  await wait(recovered, () => document.querySelector('#upload-history').children.length === 1);
+  await recovered.locator('#clear-upload-history').click();
+  assert.deepEqual(await recovered.evaluate(key => JSON.parse(localStorage.getItem(key)), storageKey), []);
+  assert.equal(await recovered.locator('#upload-history > li').count(), 0);
+  // Continue existing revocation checks on the reopened page.
+  page = recovered;
+
   await formEvent(admin, target, () => row.getByRole('button', {name: 'Ban user', exact: true}).click());
   await wait(page, () => document.querySelector('#account-status').textContent.includes('banned'));
   assert.equal(await page.locator('#files').isDisabled(), true);
@@ -156,7 +190,7 @@ try {
   result = await authenticate(page, 'login', member, false); assert.match(result.error, /Invalid username or password/);
   assert.equal((await authenticate(page, 'login', {...member, password: newPassword})).user.id, memberID);
   assert.deepEqual(pageErrors, []);
-  console.log(`Real Chromium ${browser.version()} passed: quota units/precision, rejected-upload progress, isolated result tabs, row details/paging/admin scope, ban/unban/login feedback, idle and request-driven reset sign-out.`);
+  console.log(`Real Chromium ${browser.version()} passed: quota units/precision, rejected-upload progress, isolated gallery/upload result tabs, browser-reopened history and file-reselection retry/clear, row details/paging/admin scope, ban/unban/login feedback, idle and request-driven reset sign-out.`);
 } catch (error) {
   if (service?.exitCode !== null) console.error('Isolated service diagnostics:', serviceLog);
   throw error;

@@ -40,6 +40,8 @@ const galleryLimit = 20;
 const accountStatus = document.querySelector('#account-status');
 const form = document.querySelector('#account-form');
 const results = [];
+const historyRows = [];
+let historyStorageError = '';
 const galleryDetail = document.querySelector('#gallery-detail');
 let uploading = false;
 let accountRefreshing = false;
@@ -53,7 +55,7 @@ async function api(path, method = 'GET', data) {
     throw new Error('Your session has expired. Sign in again.');
   }
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(value.error || `HTTP ${response.status}`), {status: response.status, code: value.code});
   return value;
 }
 async function loadAccount(refreshLists = true) {
@@ -69,21 +71,25 @@ async function loadAccount(refreshLists = true) {
 }
 function applyAccount(value) {
   const previousID=account?.id;
-  account = value.user || null;
+  const next = value.user || null;
+  if (previousID !== next?.id) savePending();
+  account = next;
   if(previousID!==account?.id) {
     sessionRevision++;
     clearAdmin();
     clearGallery();
-    for (const row of results) row.deleted = true;
+    for (const row of [...results, ...historyRows]) { row.deleted = true; row.request?.abort?.(); }
     results.splice(0);
+    historyRows.splice(0);
+    document.querySelector('#upload-history').replaceChildren();
+    historyStorageError = '';
+    document.querySelector('#history-status').textContent='';
     uploading = false;
     document.querySelector('#upload-results').replaceChildren();
     document.querySelector('#files').value='';
     document.querySelector('#upload-token').textContent='';
     document.querySelector('#total-progress').textContent='';
-    if(account) {
-      try {const failures=JSON.parse(localStorage.getItem(`pebril-upload-failures-${account.id}`) || '[]');if(failures.length) {document.querySelector('#total-progress').textContent=`Previous incomplete uploads: ${failures.map(item=>item.name).join(', ')}. Select the files again to retry from the beginning.`;}} catch { /* Cleared or unavailable browser storage has no recoverable history. */ }
-    }
+    if (account) restorePending();
   }
   csrf = value.csrf || '';
   initializing = !value.initialized;
@@ -93,7 +99,7 @@ function applyAccount(value) {
   if (initializing || account) registering = false;
   renderAccountMode();
   for (const id of ['logout','token-controls','upload-section']) document.querySelector(`#${id}`).hidden = !account;
-  const uploadBlocked = !account || account.status === 'banned' || account.quota === 0;
+  const uploadBlocked = !account || account.status === 'banned' || String(account.quota) === '0';
   for (const id of ['files','upload']) document.querySelector(`#${id}`).disabled = uploadBlocked || uploading;
   document.querySelector('#logout').disabled = uploading;
   document.querySelector('#issue-token').disabled = !account;
@@ -137,7 +143,18 @@ form.addEventListener('submit', async event => {
   catch (error) {accountStatus.textContent = error.message;}
   finally {button.disabled = false;}
 });
-document.querySelector('#logout').addEventListener('click', async () => {signingOut=true;sessionRevision++; accountRequest++; clearAdmin(); clearGallery(); try {await api('logout','POST'); document.querySelector('#upload-token').textContent=''; await loadAccount();} catch(error) {accountStatus.textContent=error.message;} finally {signingOut=false;}});
+document.querySelector('#logout').addEventListener('click', async () => {
+  const owner = account?.id;
+  signingOut = true; sessionRevision++; accountRequest++; clearAdmin(); clearGallery();
+  try { await api('logout', 'POST'); document.querySelector('#upload-token').textContent = ''; await loadAccount(); }
+  catch (error) {
+    await loadAccount().catch(() => {});
+    if (account?.id === owner) {
+      for (const row of [...historyRows, ...results]) if (row.image && !imageFinished(row.image)) watchImage(row, owner);
+    }
+    accountStatus.textContent = error.message;
+  } finally { signingOut = false; }
+});
 document.querySelector('#issue-token').addEventListener('click', async () => {if(!account)return;const revision=sessionRevision;try {const value=await api('upload-token','POST');if(revision===sessionRevision)document.querySelector('#upload-token').textContent=value.token;} catch(error) {if(revision===sessionRevision)accountStatus.textContent=error.message;}});
 document.querySelector('#revoke-token').addEventListener('click', async () => {const revision=sessionRevision;try {await api('upload-token','DELETE');if(revision===sessionRevision)document.querySelector('#upload-token').textContent='Token revoked.';} catch(error) {if(revision===sessionRevision)accountStatus.textContent=error.message;}});
 function clearAdmin() {
@@ -267,69 +284,217 @@ function userRow(user, revision) {
   return row;
 }
 document.querySelector('#refresh-users').addEventListener('click', loadUsers);
-function uploadFile(file, row, progress) {
-  return new Promise((resolve,reject) => {
+function uploadFile(file, row) {
+  return new Promise((resolve, reject) => {
     const revision = sessionRevision;
-    const request=new XMLHttpRequest(); request.open('POST','/api/v1/uploads'); request.setRequestHeader('X-CSRF-Token',csrf);
-    request.upload.onprogress=event => {if(!row.deleted && revision===sessionRevision && event.lengthComputable) {progress.removeAttribute('value');row.status.textContent=`Received ${event.loaded}/${event.total} bytes; final image pending.`;}};
-    request.onload=() => {if(request.status===401 && revision===sessionRevision){expireSession();reject(new Error('Your session has expired. Sign in again.'));return;}try {const value=JSON.parse(request.responseText);if(request.status>=200 && request.status<300) resolve(value);else reject(new Error(value.error || 'Upload failed'));}catch(error){reject(error);}};
-    request.onerror=() => reject(new Error('Network failure; upload outcome may require checking this page after signing in again.'));
-    const body=new FormData();body.append('file',file);request.send(body);
+    const request = new XMLHttpRequest();
+    row.request = request;
+    request.open('POST', '/api/v1/uploads');
+    request.setRequestHeader('X-CSRF-Token', csrf);
+    request.upload.onprogress = event => {
+      if (!row.deleted && revision === sessionRevision && event.lengthComputable) {
+        row.progress.value = Math.min(99, Math.floor(100 * event.loaded / event.total));
+        row.status.textContent = `Sent ${event.loaded}/${event.total} request bytes; final image pending.`;
+      }
+    };
+    request.onload = () => {
+      row.request = null;
+      if (request.status === 401 && revision === sessionRevision) {
+        expireSession(); reject(new Error('Your session has expired. Sign in again.')); return;
+      }
+      try {
+        const value = JSON.parse(request.responseText);
+        if (request.status >= 200 && request.status < 300) resolve(value);
+        else reject(Object.assign(new Error(value.error || 'Upload failed'), {code: value.code, status: request.status}));
+      } catch {
+        reject(new Error('Upload response unavailable. Check the gallery before uploading again; the server may already have received this file.'));
+      }
+    };
+    request.onerror = request.onabort = () => {
+      row.request = null;
+      reject(new Error('Network failure; upload outcome is unknown. Check the gallery before uploading again; another upload creates another record.'));
+    };
+    const body = new FormData(); body.append('file', file); request.send(body);
   });
 }
 function updateTotal() {
-  const completed=results.filter(row => row.image?.state==='completed').length;
-  const failed=results.filter(row => row.failed).length;
-  document.querySelector('#total-progress').textContent=`Completed: ${completed}/${results.length}. Failed: ${failed}.`;
+  const completed = results.filter(row => row.image?.state === 'completed' && row.image.url).length;
+  const failed = results.filter(row => row.failed).length;
+  document.querySelector('#total-progress').textContent = `Completed: ${completed}/${results.length}. Failed: ${failed}.`;
+  const remaining = historyRows.filter(row => !row.forgotten && !(row.image?.state === 'completed' && row.image.url)).length;
+  document.querySelector('#history-status').textContent = historyStorageError || (remaining ? `${remaining} restored records. File contents are not stored. Check the gallery for server results before uploading again.` : '');
+}
+function historyKey() { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+function storedHistory() {
+  const value = JSON.parse(localStorage.getItem(`pebril-upload-failures-${account.id}`) || '[]');
+  if (!Array.isArray(value)) throw new Error('Invalid local history');
+  return value.filter(record => record && typeof record.name === 'string');
 }
 function savePending() {
-  if(!account)return;
-  try {localStorage.setItem(`pebril-upload-failures-${account.id}`,JSON.stringify(results.filter(row=>row.failed || !row.image).map(row=>({name:row.name,id:row.image?.id || null}))));} catch { /* Browser storage is optional. */ }
-}
-document.querySelector('#upload').addEventListener('click', async () => {
-  if(!account || account.status==='banned' || account.quota===0)return;
-  const files=Array.from(document.querySelector('#files').files);if(!files.length)return;
-  const revision = sessionRevision;
-  uploading = true;
-  const button=document.querySelector('#upload');button.disabled=true;document.querySelector('#logout').disabled=true;
-  for(const file of files){const item=document.createElement('li');const name=document.createElement('span');name.textContent=file.name;const status=document.createElement('p');status.textContent='0% pending upload';const progress=document.createElement('progress');progress.max=100;progress.value=0;progress.setAttribute('aria-label',`Upload progress for ${file.name}`);item.append(name,status,progress);document.querySelector('#upload-results').append(item);results.push({name:file.name,file,item,status,progress});}
-  savePending();updateTotal();
+  if (!account) return;
   try {
-    for(const row of results.filter(row=>row.file && !row.image && !row.failed)){
+    let records;
+    try { records = storedHistory(); } catch (error) {
+      // A damaged JSON value can be replaced; denied storage must still surface below.
+      if (error instanceof SyntaxError || error.message === 'Invalid local history') records = [];
+      else throw error;
+    }
+    const saved = [];
+    for (const row of [...historyRows, ...results]) {
+      const index = records.findIndex(record => record.key === row.key);
+      if (row.persisted && index < 0) row.forgotten = true;
+      if (row.forgotten || (row.image?.state === 'completed' && row.image.url)) {
+        if (index >= 0) records.splice(index, 1);
+        continue;
+      }
+      const record = {key: row.key, name: row.name, size: row.size, lastModified: row.lastModified, id: row.image?.id || records[index]?.id || null};
+      if (index >= 0) records[index] = record; else records.push(record);
+      saved.push(row);
+    }
+    localStorage.setItem(`pebril-upload-failures-${account.id}`, JSON.stringify(records));
+    for (const row of saved) row.persisted = true;
+    historyStorageError = '';
+  } catch { historyStorageError = 'Browser storage is unavailable; these records cannot be restored after leaving this page.'; }
+}
+function uploadRow(record, container) {
+  const item = document.createElement('li');
+  const name = document.createElement('span'); name.textContent = record.name;
+  const status = document.createElement('p'); status.textContent = '0% pending upload';
+  const progress = document.createElement('progress'); progress.max = 100; progress.value = 0;
+  progress.setAttribute('aria-label', `Upload progress for ${record.name}`);
+  const retry = document.createElement('div'); retry.hidden = true;
+  item.append(name, status, progress, retry); container.append(item);
+  return {...record, key: record.key || historyKey(), item, status, progress, retry};
+}
+function restorePending() {
+  let records;
+  try {
+    records = storedHistory();
+    if (records.some(record => typeof record.key !== 'string' || !record.key)) {
+      records = records.map(record => ({...record, key: typeof record.key === 'string' && record.key ? record.key : historyKey()}));
+      localStorage.setItem(`pebril-upload-failures-${account.id}`, JSON.stringify(records));
+    }
+  } catch { historyStorageError = 'Local history is unavailable or damaged. Check the gallery for server results.'; updateTotal(); return; }
+  for (const record of records) {
+    if (!record || typeof record.name !== 'string') continue;
+    const row = uploadRow({key: record.key, persisted: true, name: record.name,
+      size: Number.isSafeInteger(record.size) && record.size >= 0 ? record.size : undefined,
+      lastModified: Number.isSafeInteger(record.lastModified) && record.lastModified >= 0 ? record.lastModified : undefined}, document.querySelector('#upload-history'));
+    historyRows.push(row);
+    if (typeof record.id === 'string' && record.id) {
+      row.image = {id: record.id, state: 'checking'};
+      row.progress.removeAttribute('value'); row.status.textContent = 'Checking the server record...';
+      watchImage(row, account.id);
+    } else {
+      row.failed = true; row.progress.hidden = true;
+      row.status.textContent = 'Incomplete or unconfirmed upload. Check the gallery first; selecting the original file starts another upload from zero.';
+      offerReceptionRetry(row);
+    }
+  }
+  updateTotal();
+}
+function offerReceptionRetry(row) {
+  if (!row.retry) return;
+  row.retry.hidden = false;
+  const label = document.createElement('label'); label.textContent = 'Select the original file again ';
+  const input = document.createElement('input'); input.type = 'file'; label.append(input);
+  const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Retry upload from zero';
+  const message = document.createElement('p');
+  button.addEventListener('click', async () => {
+    if (row.deleted || !account) return;
+    if (uploading) { message.textContent = 'Wait for the current upload batch to finish.'; return; }
+    const file = input.files[0];
+    if (!file || file.name !== row.name || (row.size !== undefined && file.size !== row.size) || (row.lastModified !== undefined && file.lastModified !== row.lastModified)) {
+      message.textContent = 'Select the original file with the same name, size and modification time.'; return;
+    }
+    if (row.forgotten) { row.key = historyKey(); row.persisted = false; }
+    row.file = file; row.image = null; row.failed = false; row.forgotten = false;
+    await sendRows([row]);
+  });
+  row.retry.replaceChildren(label, button, message);
+}
+async function sendRows(rows) {
+  const revision = sessionRevision;
+  uploading = true; applyAccount({user: account, csrf, initialized: true});
+  savePending(); updateTotal();
+  try {
+    for (const row of rows) {
+      if (revision !== sessionRevision || row.deleted) break;
+      row.retry.hidden = true; row.progress.hidden = false; row.progress.value = 0; row.status.textContent = '0% pending upload';
+      while (revision === sessionRevision && !row.deleted) {
+        try {
+          if (account.status === 'banned' || String(account.quota) === '0') throw new Error('New uploads are disabled for this account.');
+          const image = await uploadFile(row.file, row);
+          if (revision !== sessionRevision || row.deleted) break;
+          row.image = image; renderImage(row);
+          if (!imageFinished(image)) watchImage(row, account.id);
+          break;
+        } catch (error) {
+          if (revision !== sessionRevision || row.deleted) break;
+          if (error.status === 429 && ['upload_capacity', 'resource_cooldown'].includes(error.code)) {
+            row.progress.value = 0;
+            row.status.textContent = error.code === 'upload_capacity' ? 'Waiting for an upload task slot...' : 'Waiting for processing resources to recover...';
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          row.failed = true; row.progress.hidden = true; row.status.textContent = error.message; offerReceptionRetry(row); break;
+        }
+      }
       if (revision !== sessionRevision) break;
-      try {const image=await uploadFile(row.file,row,row.progress);if(revision!==sessionRevision)break;row.image=image;renderImage(row);if(!['completed','failed'].includes(row.image.state)){watchImage(row,account.id);}}
-      catch(error){if(revision!==sessionRevision)break;row.failed=true;row.progress.hidden=true;row.status.textContent=error.message;}
-      row.file=null;savePending();updateTotal();
+      row.file = null; savePending(); updateTotal();
     }
   } finally {
     if (revision === sessionRevision) {
-      uploading=false;button.disabled=false;document.querySelector('#logout').disabled=false;document.querySelector('#files').value='';await loadAccount();
+      uploading = false; document.querySelector('#files').value = '';
+      applyAccount({user: account, csrf, initialized: true});
+      await loadAccount().catch(() => {});
     }
   }
+}
+document.querySelector('#clear-upload-history').addEventListener('click', () => {
+  if (!account) return;
+  for (const row of [...historyRows, ...results]) row.forgotten = true;
+  for (const row of historyRows) row.deleted = true;
+  historyRows.splice(0); document.querySelector('#upload-history').replaceChildren();
+  try { localStorage.setItem(`pebril-upload-failures-${account.id}`, '[]'); historyStorageError = ''; }
+  catch { historyStorageError = 'Browser storage is unavailable; local history could not be cleared.'; }
+  updateTotal();
+});
+document.querySelector('#upload').addEventListener('click', async () => {
+  if (!account || uploading || account.status === 'banned' || String(account.quota) === '0') return;
+  const files = Array.from(document.querySelector('#files').files); if (!files.length) return;
+  const rows = files.map(file => uploadRow({name: file.name, size: file.size, lastModified: file.lastModified, file}, document.querySelector('#upload-results')));
+  results.push(...rows);
+  await sendRows(rows);
 });
 async function copyLinks(markdown) {
-  const text=results.filter(row=>row.image?.url).map(row=>{const url=new URL(row.image.url,location.href).href;return markdown ? `![](${url})` : url;}).join('\n');
+  const text=[...historyRows, ...results].filter(row=>row.image?.url).map(row=>{const url=new URL(row.image.url,location.href).href;return markdown ? `![](${url})` : url;}).join('\n');
   try {await navigator.clipboard.writeText(text);} catch {document.querySelector('#total-progress').textContent='Clipboard unavailable. Copy the displayed links manually.';}
 }
 document.querySelector('#copy-urls').addEventListener('click',()=>copyLinks(false));
 document.querySelector('#copy-markdown').addEventListener('click',()=>copyLinks(true));
 loadAccount().catch(error => {accountStatus.textContent=error.message;});
 
+function imageFinished(image) {
+  return image.state === 'failed' || (image.state === 'completed' && Boolean(image.url));
+}
 function renderImage(row) {
   if (row.deleted) return;
   const image=row.image;
   row.failed=['failed','retry_wait'].includes(image.state);
   row.progress.hidden = image.state === 'failed';
+  if (row.retry) row.retry.hidden = true;
   if(image.state==='completed' && image.url) {
     row.progress.value=100;
-    const link=document.createElement('a');link.href=image.url;link.textContent=new URL(image.url,location.href).href;
+    const link=document.createElement('a');link.href=image.url;link.textContent=new URL(image.url,location.href).href;link.target='_blank';link.rel='noopener';
     row.status.replaceChildren('100% ready: ',link);
   } else {
     row.progress.removeAttribute('value');
     row.status.textContent=image.error ? `${image.error}${image.state==='retry_wait' ? ' Automatic retry pending.' : ''}` : `Processing: ${image.state}.`;
     if(image.temporary && image.url) {
-      const link=document.createElement('a');link.href=image.url;link.textContent='Temporary original link';row.status.append(' ',link);
+      const link=document.createElement('a');link.href=image.url;link.textContent='Temporary original link';link.target='_blank';link.rel='noopener';row.status.append(' ',link);
     }
+    if (image.state === 'failed' && !image.retryable) offerReceptionRetry(row);
     if(image.state==='failed' && image.retryable) {
       const button=document.createElement('button');button.type='button';button.textContent='Retry conversion';
       button.addEventListener('click',async()=>{
@@ -337,7 +502,7 @@ function renderImage(row) {
         const revision = sessionRevision;
         button.disabled=true;
         try {const updated=await api(`uploads/${image.id}/retry`,'POST');if(row.deleted || revision!==sessionRevision)return;row.image=updated;row.failed=false;renderImage(row);watchImage(row,account.id);}
-        catch(error){if(!row.deleted && revision===sessionRevision)row.status.textContent=error.message;}finally{button.disabled=false;}
+        catch(error){if(!row.deleted && revision===sessionRevision)row.status.append(` Retry rejected: ${error.message}`);}finally{button.disabled=false;}
       });
       row.status.append(' ',button);
     }
@@ -346,11 +511,17 @@ function renderImage(row) {
 }
 async function watchImage(row,owner) {
   const revision = sessionRevision;
-  while(!row.deleted && revision===sessionRevision && account?.id===owner && !['completed','failed'].includes(row.image.state)) {
+  while(!row.deleted && revision===sessionRevision && account?.id===owner && !imageFinished(row.image)) {
     await new Promise(resolve=>setTimeout(resolve,1000));
     if(row.deleted || revision!==sessionRevision || account?.id!==owner)return;
     try {const image=await api(`uploads/${row.image.id}`);if(row.deleted || revision!==sessionRevision || account?.id!==owner)return;row.image=image;renderImage(row);}
-    catch(error){if(!row.deleted && revision===sessionRevision && account?.id===owner)row.status.textContent=`Cannot refresh processing result: ${error.message}`;return;}
+    catch(error){
+      if (row.deleted || revision !== sessionRevision || account?.id !== owner) return;
+      row.status.textContent = `Cannot refresh processing result: ${error.message}`;
+      if ([403, 404].includes(error.status)) {
+        row.failed = true; row.progress.hidden = true; offerReceptionRetry(row); savePending(); updateTotal(); return;
+      }
+    }
   }
   if(!row.deleted && revision===sessionRevision && account?.id===owner)loadAccount().catch(()=>{});
 }
@@ -439,9 +610,12 @@ async function inspectImage(id, listCurrent, row) {
       try {
         await api(`images/${encodeURIComponent(id)}`, 'DELETE');
         if (revision !== sessionRevision) return;
-        for (let index = results.length - 1; index >= 0; index--) {
-          if (results[index].image?.id === id) { results[index].deleted = true; results.splice(index, 1); }
+        for (const rows of [results, historyRows]) {
+          for (let index = rows.length - 1; index >= 0; index--) {
+            if (rows[index].image?.id === id) { rows[index].deleted = true; rows.splice(index, 1); }
+          }
         }
+        document.querySelector('#upload-history').replaceChildren(...historyRows.map(row => row.item));
         document.querySelector('#upload-results').replaceChildren(...results.map(row => row.item));
         savePending(); updateTotal();
         if (!current()) return;

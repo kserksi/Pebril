@@ -30,7 +30,7 @@ Conversion, public result links, and basic gallery management are available. Pri
 
 ## What is available today?
 
-The `dev` branch is at **0.0.8-dev**, with ordinary account registration/administration and a basic gallery. The latest published prerelease is [0.0.8-dev](https://github.com/kserksi/Pebril/releases/tag/v0.0.8-dev).
+The current development version is **0.0.9-dev**, with ordinary account registration/administration and a basic gallery. Published prereleases and downloads are listed on the [Releases page](https://github.com/kserksi/Pebril/releases).
 
 | Capability | Current status |
 |---|---|
@@ -39,7 +39,8 @@ The `dev` branch is at **0.0.8-dev**, with ordinary account registration/adminis
 | Image reception, content validation, quota checks, and safe storage | Available |
 | Static conversion | PNG, JPEG, WebP, and deployment-enabled AVIF output |
 | Animation and SVG | Animated WebP/GIF, WebP covers, and sanitized SVG delivery |
-| Processing feedback and sharing | Status polling, retries, public results, and ordered URL/Markdown copying |
+| Processing feedback and sharing | Per-image/batch feedback, task-slot waiting, retries, public results, and ordered URL/Markdown copying |
+| Browser recovery | Account-bound local records, original-file reselection for upload retries, and manual history clearing |
 | Runtime setup | Independent Bash launcher, consented downloads, offline reuse, and component recovery |
 | Ordinary accounts | Registration, account status, and administrator controls for ordinary-user status, quota, and password reset |
 | Basic gallery | Paginated owner/administrator views, image details, and individual deletion |

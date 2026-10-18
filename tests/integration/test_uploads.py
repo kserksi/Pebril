@@ -169,6 +169,41 @@ def main():
                 first = wait_image(ordinary, first['id'])
                 second = wait_image(ordinary, second['id'])
                 assert first['format'] == second['format'] == 'webp'
+                # Lose a real HTTP response while conversion is held, then rediscover the result.
+                previous_ids = {image['id'] for image in ordinary.request('/api/v1/images?limit=100')[0]['images']}
+                worker = root / 'bin/pebril-image-worker'
+                real_worker = worker.with_name('pebril-image-worker.real')
+                hold = worker.with_name('hold-disconnected-worker')
+                worker.rename(real_worker)
+                worker.write_text('#!/bin/bash\nwhile [ -e "$(dirname "$0")/hold-disconnected-worker" ]; do sleep 0.05; done\nexec "$(dirname "$0")/pebril-image-worker.real" "$@"\n')
+                worker.chmod(0o700)
+                hold.touch()
+                try:
+                    boundary = secrets.token_hex(16)
+                    body = f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="lost-response.png"\r\nContent-Type: image/png\r\n\r\n'.encode() + fixtures['png'] + f'\r\n--{boundary}--\r\n'.encode()
+                    headers = f'POST /api/v1/uploads HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {len(body)}\r\n\r\n'.encode()
+                    with socket.create_connection(('127.0.0.1', port), timeout=5) as connection:
+                        connection.sendall(headers + body)
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline:
+                            records = ordinary.request('/api/v1/images?limit=100')[0]['images']
+                            discovered = [image for image in records if image['id'] not in previous_ids]
+                            if len(discovered) == 1 and discovered[0]['state'] == 'processing': break
+                            time.sleep(.05)
+                        assert len(discovered) == 1 and discovered[0]['state'] == 'processing', discovered
+                        lost_id = discovered[0]['id']
+                    # The connection closes without consuming any response bytes.
+                    hold.unlink()
+                    complete = wait_image(ordinary, lost_id)
+                    assert complete['state'] == 'completed' and complete['format'] == 'webp'
+                    recovered = ordinary.request('/api/v1/images/' + lost_id)[0]
+                    assert recovered['state'] == 'completed' and recovered['url'] == complete['url']
+                    assert anonymous.request(recovered['url'])[0]
+                    ordinary.request('/api/v1/images/' + lost_id, 'DELETE')
+                finally:
+                    hold.unlink(missing_ok=True)
+                    worker.unlink()
+                    real_worker.rename(worker)
                 ordinary.request('/api/v1/uploads/' + first['id'])
                 admin.request('/api/v1/uploads/' + first['id'],expected=404)
                 anonymous.request('/api/v1/uploads/' + first['id'],token=token,expected=403)
@@ -226,11 +261,11 @@ def main():
                 used = admin.request('/api/v1/account')[0]['user']['used']
                 update('UPDATE users SET quota=? WHERE id=?',(used+1,admin_id))
                 admin.upload(svg,expected=201)
-                admin.upload(svg,expected=429)
+                assert admin.upload(svg,expected=429)['code'] == 'storage_quota'
                 update('UPDATE users SET quota=? WHERE id=?',(1<<30,admin_id))
                 for _ in range(10):
                     update("INSERT INTO images(id,user_id,state,policy,created_at) VALUES(?,?,'receiving',?,?)",(secrets.token_hex(16),ordinary_id,json.dumps({'revision':1,'policy':policy}),int(time.time()*1000)))
-                ordinary.upload(svg,expected=429)
+                assert ordinary.upload(svg,expected=429)['code'] == 'upload_capacity'
                 ordinary.request('/api/v1/logout','POST')
                 ordinary.upload(svg,expected=401)
                 assert not list((data / '.incoming').iterdir()), 'Reception or validation left temporary files'
@@ -287,6 +322,6 @@ def main():
             with sqlite3.connect(database) as connection: connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             for relative in ['.incoming','.converting','image']:
                 shutil.rmtree(data / relative,ignore_errors=True)
-    print('Upload integration passed: authentication, scopes, content safety, limits, SVG delivery, deduplication, quota, revocation, restart persistence and cleanup.')
+    print('Upload integration passed: authentication, scopes, content safety, limits, SVG delivery, deduplication, quota, revocation, lost HTTP response recovery, restart persistence and cleanup.')
 
 if __name__ == '__main__': main()

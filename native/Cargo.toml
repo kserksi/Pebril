@@ -1,6 +1,6 @@
 [package]
 name = "pebril-native"
-version = "0.0.8-dev"
+version = "0.0.9-dev"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"

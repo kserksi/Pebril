@@ -24,8 +24,8 @@ const timers=[];let currentImage={id:'2',state:'queued'};
 const context=vm.createContext({alert:message=>alerts.push(message),setInterval(){},setTimeout:callback=>timers.push(callback),document,FormData,XMLHttpRequest,URL,location:{href:'https://example.invalid/'},navigator:{clipboard:{async writeText(value){clipboard=value;}}},localStorage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)},fetch:async path=>({ok:true,json:async()=>path.includes('/images?')?{images:[],total:0}:path.includes('/uploads/')?currentImage:path.endsWith('/status')?{version:'test',config_revision:1,sqlite:true,native:{svg:true,gif:true}}:{initialized:true,user,csrf:'fixture'}})});
 vm.runInContext(fs.readFileSync(new URL('../../internal/server/web/app.js',import.meta.url),'utf8'),context);
 await new Promise(resolve=>setImmediate(resolve));
-assert(document.querySelector('#total-progress').textContent.includes('owner-one-file'));
-assert(!document.querySelector('#total-progress').textContent.includes('owner-two-file'));
+assert(document.querySelector('#upload-history').children.some(row=>row.children[0].textContent==='owner-one-file'));
+assert(!document.querySelector('#upload-history').children.some(row=>row.children[0].textContent==='owner-two-file'));
 document.querySelector('#files').files=[{name:'first.svg'},{name:'second.png'}];
 const uploading=document.querySelector('#upload').listeners.click();
 assert.equal(document.querySelector('#logout').disabled,true);
@@ -50,8 +50,8 @@ assert.match(document.querySelector('#total-progress').textContent,/Completed: 2
 user={id:2,username:'other-fixture',used:0,quota:100};
 await context.loadAccount();
 assert.equal(document.querySelector('#upload-results').children.length,0);
-assert(document.querySelector('#total-progress').textContent.includes('owner-two-file'));
-assert(!document.querySelector('#total-progress').textContent.includes('owner-one-file'));
+assert(document.querySelector('#upload-history').children.some(row=>row.children[0].textContent==='owner-two-file'));
+assert(!document.querySelector('#upload-history').children.some(row=>row.children[0].textContent==='owner-one-file'));
 console.log('Web logic passed: account-bound history, batch order, logout guard, no premature raster completion, and link copying.');
 
 context.showLoginWarnings({user:{admin:false},resource_warnings:[{message:'must remain private'}]});

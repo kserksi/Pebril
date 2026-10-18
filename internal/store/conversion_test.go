@@ -296,3 +296,43 @@ func TestRestrictedQueueKeepsAVIFWithoutBlockingOtherWork(t *testing.T) {
 		t.Fatal("Normal startup did not resume AVIF queue", id, err)
 	}
 }
+
+func TestSiteCapacityAndManualRetryReacquisition(t *testing.T) {
+	policy := config.Defaults()
+	policy.AutomaticRetry = false
+	db, image := conversionFixture(t, policy)
+	if err := db.ConversionFailed(image, "Conversion failed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.Exec("INSERT INTO users(id,username,password,quota) VALUES(2,'site-fixture',x'00',?)", DefaultQuota); err != nil {
+		t.Fatal(err)
+	}
+	// Seed persisted active states directly; the boundary does not require 10,000 transfers.
+	if _, err := db.DB.Exec(`WITH RECURSIVE tasks(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM tasks WHERE n<9999)
+INSERT INTO images(id,user_id,state,policy,created_at)
+SELECT printf('%032x',n),2,CASE n%5 WHEN 0 THEN 'receiving' WHEN 1 THEN 'received' WHEN 2 THEN 'queued' WHEN 3 THEN 'processing' ELSE 'retry_wait' END,?,n FROM tasks`, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AcceptUpload("site-boundary", image.UserID, image.Policy); err != nil {
+		t.Fatal("The 10,000th active task was refused", err)
+	}
+	if err := db.AcceptUpload("site-overflow", image.UserID, image.Policy); !errors.Is(err, ErrCapacity) {
+		t.Fatal("The site admitted more than 10,000 active tasks", err)
+	}
+	if err := db.RetryConversion(image.ID, image.UserID); !errors.Is(err, ErrCapacity) {
+		t.Fatal("Manual retry bypassed the site limit", err)
+	}
+	if err := db.FailUpload("site-boundary", "Reception failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RetryConversion(image.ID, image.UserID); err != nil {
+		t.Fatal("Manual retry could not reacquire the released site slot", err)
+	}
+	stored, err := db.Image(image.ID)
+	if err != nil || stored.State != "queued" || stored.Attempts != 0 || !stored.Temporary {
+		t.Fatal("Manual retry lost its queue, retry budget or fallback", stored, err)
+	}
+	if err := db.AcceptUpload("site-overflow", image.UserID, image.Policy); !errors.Is(err, ErrCapacity) {
+		t.Fatal("Manual retry did not occupy its reacquired site slot", err)
+	}
+}

@@ -5,14 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kserksi/Pebril/internal/auth"
-	"github.com/kserksi/Pebril/internal/config"
-	"github.com/kserksi/Pebril/internal/imageproc"
-	"github.com/kserksi/Pebril/internal/nativeprobe"
-	"github.com/kserksi/Pebril/internal/resources"
-	"github.com/kserksi/Pebril/internal/server"
-	"github.com/kserksi/Pebril/internal/store"
-	"github.com/kserksi/Pebril/internal/uploads"
 	"log/slog"
 	"net"
 	"net/http"
@@ -22,9 +14,18 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/kserksi/Pebril/internal/auth"
+	"github.com/kserksi/Pebril/internal/config"
+	"github.com/kserksi/Pebril/internal/imageproc"
+	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/resources"
+	"github.com/kserksi/Pebril/internal/server"
+	"github.com/kserksi/Pebril/internal/store"
+	"github.com/kserksi/Pebril/internal/uploads"
 )
 
-var version = "0.0.7-dev"
+var version = "0.0.9-dev"
 
 func main() {
 	if err := run(); err != nil {

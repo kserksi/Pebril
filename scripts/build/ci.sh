@@ -25,6 +25,7 @@ cargo test --locked --manifest-path native/Cargo.toml
 bash -n scripts/build.sh scripts/pebril.sh scripts/build/ci.sh
 node --check internal/server/web/app.js
 node tests/web/test_uploads.mjs
+node tests/web/test_recovery.mjs
 node tests/web/test_accounts.mjs
 node tests/web/test_gallery.mjs
 python3 tests/packaging/test_ci.py
