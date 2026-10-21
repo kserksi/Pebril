@@ -54,7 +54,9 @@ jobs:
 
   prerelease:
     needs: linux-amd64
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    # Development checkpoint pushes must not create tags or Releases.
+    # Restore publication only after explicit owner authorization.
+    if: false
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
