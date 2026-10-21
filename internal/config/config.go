@@ -111,7 +111,7 @@ func loadDeployment(root string, inherit bool) (Deployment, error) {
 			}
 		}
 		if err != nil {
-			return Deployment{}, fmt.Errorf(".env: %w", err)
+			return Deployment{}, errors.New(".env contains invalid deployment syntax")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Deployment{}, err
@@ -246,7 +246,7 @@ func duplicateKeys(data []byte) error {
 					return errors.New("Invalid JSON key")
 				}
 				if seen[s] {
-					return fmt.Errorf("Duplicate JSON key %s", s)
+					return errors.New("Duplicate JSON key")
 				}
 				seen[s] = true
 				if e = walk(); e != nil {

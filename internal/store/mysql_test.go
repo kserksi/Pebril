@@ -59,7 +59,7 @@ func TestMySQLBusinessAndConnectionLoss(t *testing.T) {
 			t.Error("Refusing fixture cleanup after identity mismatch")
 			return
 		}
-		for _, table := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "deployment", "schema_migrations"} {
+		for _, table := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
 			if _, e := control.Exec("DROP TABLE " + table); e != nil {
 				t.Error(e)
 			}
@@ -73,6 +73,17 @@ func TestMySQLBusinessAndConnectionLoss(t *testing.T) {
 		t.Fatal(version, err)
 	}
 	t.Log("Real MySQL version:", version)
+	keyHash := strings.Repeat("f", 64)
+	if generation, e := db.AcquireObjectKey(keyHash); e != nil || generation != 1 {
+		t.Fatal("MySQL object generation allocation failed", generation, e)
+	}
+	if retired, e := db.RetireObjectKey(keyHash, 1); e != nil || !retired {
+		t.Fatal("MySQL object retirement failed", retired, e)
+	}
+	if generation, e := db.AcquireObjectKey(keyHash); e != nil || generation != 2 {
+		t.Fatal("MySQL retired key was reused", generation, e)
+	}
+
 	other := d
 	other.DBDir = t.TempDir()
 	if second, e := store.OpenDeployment(other); e == nil {
@@ -98,7 +109,7 @@ func TestMySQLBusinessAndConnectionLoss(t *testing.T) {
 	}
 	second.Close()
 	defer func() {
-		for _, table := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "deployment", "schema_migrations"} {
+		for _, table := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
 			if _, e := independentControl.Exec("DROP TABLE " + table); e != nil {
 				t.Error(e)
 			}
@@ -233,6 +244,7 @@ func TestMySQLBusinessAndConnectionLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback()
 	statement, err := tx.Prepare("INSERT INTO images(id,user_id,state,policy,created_at,error) VALUES(?,?,'queued','{}',0,'')")
 	if err != nil {
 		t.Fatal(err)

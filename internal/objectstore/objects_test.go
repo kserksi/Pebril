@@ -15,18 +15,29 @@ import (
 	"testing"
 
 	"github.com/kserksi/Pebril/internal/config"
+	"github.com/kserksi/Pebril/internal/store"
 	"github.com/kserksi/Pebril/internal/testutil"
+	"sync"
+	"time"
 )
 
 func remoteFixture(t *testing.T) (*Objects, *testutil.S3Fixture, *httptest.Server) {
 	t.Helper()
 	fixture, server := testutil.NewS3(t)
 	c := config.S3{Endpoint: server.URL, Bucket: "images", Region: "test-region", AccessKeyID: "test-access", SecretAccessKey: "test-secret", Addressing: "path", Prefix: "owned/"}
-	remote := newRemote(c, strings.Repeat("a", 32), server.Client())
-	if err := remote.claim(context.Background()); err != nil {
+	database, err := store.Open(filepath.Join(t.TempDir(), "db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	return &Objects{remote: remote}, fixture, server
+	t.Cleanup(func() { database.Close() })
+	if _, err = database.DB.Exec("INSERT INTO users(id,username,password,quota) VALUES(1,'fixture',x'00',1024)"); err != nil {
+		t.Fatal(err)
+	}
+	remote := newRemote(c, database.Namespace(), server.Client())
+	if err := remote.claim(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	return &Objects{remote: remote, keys: database, readers: map[string]int{}, pending: map[string]retiredObject{}}, fixture, server
 }
 func TestRemotePublicationStreamingAndOwnership(t *testing.T) {
 	objects, fixture, _ := remoteFixture(t)
@@ -41,6 +52,7 @@ func TestRemotePublicationStreamingAndOwnership(t *testing.T) {
 	if err != nil || size != int64(len(data)) {
 		t.Fatal(hash, size, err)
 	}
+	addReference(t, objects, hash, 1)
 	if _, _, err = objects.Publish(ctx, path); err != nil {
 		t.Fatal("Immutable dedupe did not verify existing bytes", err)
 	}
@@ -69,7 +81,7 @@ func TestRemotePublicationStreamingAndOwnership(t *testing.T) {
 		t.Fatal("Worker input staging changed bytes")
 	}
 	fixture.Mu.Lock()
-	fixture.Corrupt = objects.remote.key(hash)
+	fixture.Corrupt = physicalKey(t, objects, hash)
 	fixture.Mu.Unlock()
 	if _, _, err = objects.Publish(ctx, path); !errors.Is(err, ErrIntegrity) {
 		t.Fatal("HEAD size/metadata was accepted without content integrity", err)
@@ -90,6 +102,7 @@ func TestRemotePublicationStreamingAndOwnership(t *testing.T) {
 	fixture.Mu.Lock()
 	fixture.Denied = false
 	fixture.Mu.Unlock()
+	clearReferences(t, objects)
 	if err = objects.Remove(ctx, hash); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +122,9 @@ func TestRemoteReconciliationPreservesForeignAndReferencedObjects(t *testing.T) 
 	fixture.Objects[foreign] = testutil.S3Object{Data: []byte("foreign")}
 	fixture.Objects["outside/"+strings.Repeat("e", 64)] = testutil.S3Object{Data: []byte("outside"), Owner: objects.remote.namespace}
 	fixture.Mu.Unlock()
+	for n := 0; n < 5; n++ {
+		addReference(t, objects, fmt.Sprintf("%064x", n), n+1)
+	}
 	if err := objects.Reconcile(ctx, func(string) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +134,10 @@ func TestRemoteReconciliationPreservesForeignAndReferencedObjects(t *testing.T) 
 	}
 	fixture.Mu.Unlock()
 	keep := fmt.Sprintf("%064x", 0)
+	database := objects.keys.(*store.Store)
+	if _, err := database.DB.Exec("DELETE FROM images WHERE hash!=?", keep); err != nil {
+		t.Fatal(err)
+	}
 	if err := objects.Reconcile(ctx, func(hash string) bool { return hash == keep }); err != nil {
 		t.Fatal(err)
 	}
@@ -139,20 +159,20 @@ func TestRemoteReconciliationPreservesForeignAndReferencedObjects(t *testing.T) 
 func TestNamespaceClaimRefusesExistingForeignKeys(t *testing.T) {
 	objects, fixture, server := remoteFixture(t)
 	foreign := newRemote(objects.remote.configuration, strings.Repeat("b", 32), server.Client())
-	if err := foreign.claim(context.Background()); !errors.Is(err, ErrNamespace) {
+	if err := foreign.claim(context.Background(), true); !errors.Is(err, ErrNamespace) {
 		t.Fatal("Another database adopted the namespace", err)
 	}
 	fixture.Mu.Lock()
 	delete(fixture.Objects, objects.remote.marker())
 	fixture.Objects["owned/unrelated"] = testutil.S3Object{Data: []byte("foreign")}
 	fixture.Mu.Unlock()
-	if err := foreign.claim(context.Background()); !errors.Is(err, ErrNamespace) {
+	if err := foreign.claim(context.Background(), true); !errors.Is(err, ErrNamespace) {
 		t.Fatal("Nonempty prefix was silently adopted", err)
 	}
 }
 func TestLocalPublicationAndVerifiedStaging(t *testing.T) {
 	ctx := context.Background()
-	objects, err := New(ctx, filepath.Join(t.TempDir(), "objects"), config.Storage{Backend: "local"}, "")
+	objects, err := New(ctx, filepath.Join(t.TempDir(), "objects"), config.Storage{Backend: "local"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,5 +218,162 @@ func TestAmbiguousRemotePutIsVerifiedOnRetry(t *testing.T) {
 	got, err := io.ReadAll(file)
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatal("Ambiguous PUT retry did not verify stored bytes", err)
+	}
+}
+
+func addReference(t *testing.T, objects *Objects, hash string, n int) {
+	t.Helper()
+	database := objects.keys.(*store.Store)
+	if _, err := database.DB.Exec("INSERT INTO images(id,user_id,state,policy,created_at,hash) VALUES(?,1,'completed','{}',0,?)", fmt.Sprintf("%032x", n), hash); err != nil {
+		t.Fatal(err)
+	}
+}
+func clearReferences(t *testing.T, objects *Objects) {
+	t.Helper()
+	if _, err := objects.keys.(*store.Store).DB.Exec("DELETE FROM images"); err != nil {
+		t.Fatal(err)
+	}
+}
+func physicalKey(t *testing.T, objects *Objects, hash string) string {
+	t.Helper()
+	generation, err := objects.keys.ResolveObjectKey(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return objects.remote.key(objectKey(hash, generation))
+}
+
+func TestOpenedRemoteReaderSurvivesDeletionAndRepublication(t *testing.T) {
+	objects, fixture, _ := remoteFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "input")
+	body := []byte("selected remote representation")
+	os.WriteFile(path, body, 0600)
+	hash, size, err := objects.Publish(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := physicalKey(t, objects, hash)
+	reader, err := objects.Open(ctx, hash, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if err = objects.Remove(ctx, hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = objects.Publish(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	newKey := physicalKey(t, objects, hash)
+	if oldKey == newKey {
+		t.Fatal("Retired physical key was reused")
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatal("Already opened reader lost its selected bytes", err)
+	}
+	if _, err = reader.Seek(3, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	got, err = io.ReadAll(reader)
+	if err != nil || !bytes.Equal(got, body[3:]) {
+		t.Fatal("Opened multi-range reader changed generations", err)
+	}
+	if err = reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fixture.Mu.Lock()
+	_, oldExists := fixture.Objects[oldKey]
+	_, newExists := fixture.Objects[newKey]
+	fixture.Mu.Unlock()
+	if oldExists || !newExists {
+		t.Fatal("Deferred collection deleted a republished generation")
+	}
+}
+func TestLateRemoteDeleteCannotRemoveRepublishedObject(t *testing.T) {
+	objects, fixture, _ := remoteFixture(t)
+	path := filepath.Join(t.TempDir(), "input")
+	body := []byte("late deletion race")
+	os.WriteFile(path, body, 0600)
+	hash, size, err := objects.Publish(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := physicalKey(t, objects, hash)
+	wait, started := make(chan struct{}), make(chan struct{})
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(wait) }) })
+	fixture.Mu.Lock()
+	fixture.DelayDelete = wait
+	fixture.DeleteStarted = started
+	fixture.Mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	removed := make(chan error, 1)
+	go func() { removed <- objects.Remove(ctx, hash) }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Delete did not reach the remote service")
+	}
+	cancel()
+	select {
+	case err = <-removed:
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatal("Uncertain delete was reported successful", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Cancelled delete did not return")
+	}
+	if _, _, err = objects.Publish(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+	newKey := physicalKey(t, objects, hash)
+	if newKey == oldKey {
+		t.Fatal("Uncertain delete reused its physical target")
+	}
+	release.Do(func() { close(wait) })
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		fixture.Mu.Lock()
+		_, exists := fixture.Objects[oldKey]
+		fixture.Mu.Unlock()
+		if !exists {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Late remote deletion did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	file, err := objects.Open(context.Background(), hash, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	got, err := io.ReadAll(file)
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatal("Late old delete removed newly referenced bytes", err)
+	}
+}
+func TestDatabaseFailureDoesNotAuthorizeRemoteCollection(t *testing.T) {
+	objects, fixture, _ := remoteFixture(t)
+	path := filepath.Join(t.TempDir(), "input")
+	os.WriteFile(path, []byte("retained on unknown DB state"), 0600)
+	hash, _, err := objects.Publish(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := physicalKey(t, objects, hash)
+	objects.keys.(*store.Store).DB.Close()
+	if err = objects.Reconcile(context.Background(), func(string) bool { return true }); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("Unknown DB state was accepted as unreferenced", err)
+	}
+	fixture.Mu.Lock()
+	_, exists := fixture.Objects[key]
+	fixture.Mu.Unlock()
+	if !exists {
+		t.Fatal("Unknown-reference object was deleted")
 	}
 }

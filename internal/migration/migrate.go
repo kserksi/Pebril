@@ -422,7 +422,7 @@ func Run(ctx context.Context, options Options) (err error) {
 	if err = destination.SetMigrationNamespace(namespace); err != nil {
 		return err
 	}
-	selected, err := objectstore.New(ctx, filepath.Join(target.PublicDir, ".objects"), options.TargetStorage, namespace)
+	selected, err := objectstore.New(ctx, filepath.Join(target.PublicDir, ".objects"), options.TargetStorage, namespace, destination)
 	if err != nil {
 		return err
 	}

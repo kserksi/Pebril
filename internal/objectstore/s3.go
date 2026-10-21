@@ -70,7 +70,7 @@ func (r *remote) check(ctx context.Context) error {
 	}
 	return nil
 }
-func (r *remote) claim(ctx context.Context) error {
+func (r *remote) claim(ctx context.Context, mayInitialize bool) error {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
 	err := r.check(ctx)
@@ -87,6 +87,9 @@ func (r *remote) claim(ctx context.Context) error {
 			return ErrNamespace
 		}
 		return ErrUnavailable
+	}
+	if !mayInitialize {
+		return ErrNamespace
 	}
 	listed, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(r.configuration.Bucket), Prefix: aws.String(r.configuration.Prefix), MaxKeys: aws.Int32(1)})
 	if err != nil {
@@ -105,20 +108,20 @@ func (r *remote) claim(ctx context.Context) error {
 	}
 	return r.check(ctx)
 }
-func (r *remote) publish(ctx context.Context, hash string, size int64, md5 string, body io.ReadSeeker) error {
+func (r *remote) publish(ctx context.Context, hash string, generation int64, size int64, md5 string, body io.ReadSeeker) error {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
-	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(hash)), Body: body, ContentLength: aws.Int64(size), ContentMD5: aws.String(md5), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"pebril-namespace": r.namespace}})
+	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(objectKey(hash, generation))), Body: body, ContentLength: aws.Int64(size), ContentMD5: aws.String(md5), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"pebril-namespace": r.namespace, "pebril-sha256": hash}})
 	if err != nil && !precondition(err) {
 		return ErrUnavailable
 	}
 	// Full readback is the generic integrity proof; copied metadata, length and ETag are not hashes.
-	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(hash))})
+	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(objectKey(hash, generation)))})
 	if err != nil {
 		return ErrUnavailable
 	}
 	defer result.Body.Close()
-	if aws.ToInt64(result.ContentLength) != size || result.Metadata["pebril-namespace"] != r.namespace {
+	if aws.ToInt64(result.ContentLength) != size || result.Metadata["pebril-namespace"] != r.namespace || generation > 0 && result.Metadata["pebril-sha256"] != hash {
 		return ErrIntegrity
 	}
 	digest := sha256.New()
@@ -131,47 +134,47 @@ func (r *remote) publish(ctx context.Context, hash string, size int64, md5 strin
 	}
 	return nil
 }
-func (r *remote) open(ctx context.Context, hash string, size int64) (File, error) {
+func (r *remote) open(ctx context.Context, hash string, generation int64, size int64) (File, error) {
 	probe, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
-	result, err := r.client.HeadObject(probe, &s3.HeadObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(hash))})
+	result, err := r.client.HeadObject(probe, &s3.HeadObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(objectKey(hash, generation)))})
 	if err != nil {
 		if missing(err) {
 			return nil, os.ErrNotExist
 		}
 		return nil, ErrUnavailable
 	}
-	if aws.ToInt64(result.ContentLength) != size || result.Metadata["pebril-namespace"] != r.namespace {
+	if aws.ToInt64(result.ContentLength) != size || result.Metadata["pebril-namespace"] != r.namespace || generation > 0 && result.Metadata["pebril-sha256"] != hash {
 		return nil, ErrIntegrity
 	}
-	return &remoteFile{remote: r, ctx: ctx, hash: hash, size: size, etag: result.ETag}, nil
+	return &remoteFile{remote: r, ctx: ctx, hash: hash, key: objectKey(hash, generation), size: size, etag: result.ETag}, nil
 }
-func (r *remote) remove(ctx context.Context, hash string) error {
+func (r *remote) remove(ctx context.Context, hash string, generation int64) error {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
-	head, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(hash))})
+	head, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(objectKey(hash, generation)))})
 	if missing(err) {
 		return nil
 	}
 	if err != nil {
 		return ErrUnavailable
 	}
-	if head.Metadata["pebril-namespace"] != r.namespace {
+	if head.Metadata["pebril-namespace"] != r.namespace || generation > 0 && head.Metadata["pebril-sha256"] != hash {
 		return ErrNamespace
 	}
-	_, err = r.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(hash))})
+	_, err = r.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(r.key(objectKey(hash, generation)))})
 	if err != nil {
 		return ErrUnavailable
 	}
 	return nil
 }
-func (r *remote) reconcile(ctx context.Context, referenced func(string) bool) error {
+func (r *remote) reconcile(ctx context.Context, retire func(string, int64) error) error {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
 	prefix := r.configuration.Prefix + "objects/"
 	var token *string
 	for {
-		page, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(r.configuration.Bucket), Prefix: aws.String(prefix), ContinuationToken: token})
+		page, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(r.configuration.Bucket), Prefix: aws.String(prefix), ContinuationToken: token, MaxKeys: aws.Int32(1000)})
 		if err != nil {
 			return ErrUnavailable
 		}
@@ -180,11 +183,21 @@ func (r *remote) reconcile(ctx context.Context, referenced func(string) bool) er
 			if !strings.HasPrefix(key, prefix) {
 				return ErrNamespace
 			}
-			hash := strings.TrimPrefix(key, prefix)
-			if !ValidHash(hash) || referenced(hash) {
+			hash, generation, valid := splitObjectKey(strings.TrimPrefix(key, prefix))
+			if !valid {
 				continue
 			}
-			if err = r.remove(ctx, hash); err != nil && !errors.Is(err, ErrNamespace) {
+			head, e := r.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(r.configuration.Bucket), Key: aws.String(key)})
+			if missing(e) {
+				continue
+			}
+			if e != nil {
+				return ErrUnavailable
+			}
+			if head.Metadata["pebril-namespace"] != r.namespace || generation > 0 && head.Metadata["pebril-sha256"] != hash {
+				continue
+			}
+			if err = retire(hash, generation); err != nil {
 				return err
 			}
 		}
@@ -202,6 +215,7 @@ type remoteFile struct {
 	remote       *remote
 	ctx          context.Context
 	hash         string
+	key          string
 	etag         *string
 	size, offset int64
 	body         io.ReadCloser
@@ -219,7 +233,7 @@ func (f *remoteFile) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if f.body == nil {
-		input := &s3.GetObjectInput{Bucket: aws.String(f.remote.configuration.Bucket), Key: aws.String(f.remote.key(f.hash)), IfMatch: f.etag}
+		input := &s3.GetObjectInput{Bucket: aws.String(f.remote.configuration.Bucket), Key: aws.String(f.remote.key(f.key)), IfMatch: f.etag}
 		if f.offset > 0 {
 			input.Range = aws.String(fmt.Sprintf("bytes=%d-", f.offset))
 		}

@@ -122,7 +122,7 @@ func run() error {
 			nativeprobe.Result
 			Database map[string]any `json:"database"`
 			Storage  map[string]any `json:"storage"`
-		}{capability, map[string]any{"backend": deploy.DatabaseBackend, "ready": databaseErr == nil}, map[string]any{"backend": manager.Storage().Backend, "ready": storageErr == nil}}
+		}{capability, map[string]any{"backend": deploy.DatabaseBackend, "connection_ready": databaseErr == nil}, map[string]any{"backend": manager.Storage().Backend, "connection_ready": storageErr == nil}}
 		if e := json.NewEncoder(os.Stdout).Encode(report); e != nil {
 			return e
 		}
@@ -216,7 +216,7 @@ func commandArgs(args []string) (string, bool, error) {
 			}
 			command, selected = arg, true
 		default:
-			return "", false, errors.New("Usage: pebril [serve|check|version] [--allow-low-memory], or pebril reset-admin")
+			return "", false, errors.New("Usage: pebril [serve|check|version] [--allow-low-memory], pebril reset-admin, pebril recover-database, or pebril migrate --source-root PATH --target-root PATH")
 		}
 	}
 	if (command == "reset-admin" || command == "recover-database") && len(args) != 1 {

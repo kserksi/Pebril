@@ -65,7 +65,7 @@ func New(db *store.Store, m *config.Manager, d config.Deployment, executable str
 func NewWithResources(db *store.Store, m *config.Manager, d config.Deployment, executable string, capability nativeprobe.Result, monitor ResourceState) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{Resources: monitor, DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), uploads: map[string]*uploadJob{}, queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
-	objects, err := objectstore.New(ctx, s.objectDir(), m.Storage(), db.Namespace())
+	objects, err := objectstore.New(ctx, s.objectDir(), m.Storage(), db.Namespace(), db)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -181,9 +181,6 @@ func NewID() (string, error) {
 
 // Receive keeps unverified bytes outside image storage and never trusts supplied filenames.
 func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, error), cancelSource func() error) (store.Image, <-chan struct{}, error) {
-	if err := s.StorageReady(s.ctx); err != nil {
-		return store.Image{}, nil, objectstore.ErrUnavailable
-	}
 	s.lifecycle.Lock()
 	if s.closing {
 		s.lifecycle.Unlock()
@@ -222,6 +219,9 @@ func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, err
 		s.DB.FailUpload(id, "Upload reception failed")
 		os.RemoveAll(s.scratch(id))
 		return store.Image{}, nil, e
+	}
+	if err = s.StorageReady(job.ctx); err != nil {
+		return fail(objectstore.ErrUnavailable)
 	}
 	maximum := max(policy.Policy.StaticMaxBytes, policy.Policy.AnimatedMaxBytes)
 	source, err := openSource(maximum)

@@ -9,7 +9,10 @@ fail() { printf 'Pebril bootstrap: %s\n' "$*" >&2; exit 1; }
 note() { printf 'Pebril bootstrap: %s\n' "$*" >&2; }
 usage() {
     cat <<'HELP'
-Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [--allow-low-memory] [serve|check|version|reset-admin|recover-database]
+Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [--allow-low-memory] [serve|check|version]
+       pebril.sh reset-admin
+       pebril.sh recover-database
+       pebril.sh migrate --source-root PATH --target-root PATH
 
 Run as the ordinary service user. Deployment checks and dependency repair run
 before the service. --check (or check) validates without starting the service.
@@ -47,7 +50,7 @@ while (($#)); do
     esac
     shift
 done
-if [[ ( "$command" == reset-admin || "$command" == recover-database ) && "$argument_count" != 1 ]]; then fail 'reset-admin accepts no additional arguments.'; fi
+if [[ ( "$command" == reset-admin || "$command" == recover-database ) && "$argument_count" != 1 ]]; then fail 'Offline commands accept no additional arguments.'; fi
 [[ "$EUID" != 0 ]] || fail 'Run as an unprivileged service user; only package installation may use sudo.'
 [[ $(uname -s) == Linux ]] || fail 'Linux is required.'
 script_path=$(readlink -f -- "${BASH_SOURCE[0]}") || fail 'Cannot resolve the launcher path.'

@@ -77,7 +77,7 @@ func TestS3HTTPDeliveryAuthorizationAndSharedDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer service.Close()
-	selected, err := objectstore.New(context.Background(), filepath.Join(d.PublicDir, ".objects"), connection, db.Namespace())
+	selected, err := objectstore.New(context.Background(), filepath.Join(d.PublicDir, ".objects"), connection, db.Namespace(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestS3HTTPDeliveryAuthorizationAndSharedDeletion(t *testing.T) {
 		t.Fatal("Deleted origin link remained available", response.Code)
 	}
 	fixture.Mu.Lock()
-	_, exists := fixture.Objects["delivery/objects/"+hash]
+	_, exists := fixture.Objects["delivery/objects/"+hash+"-1"]
 	fixture.Mu.Unlock()
 	if !exists {
 		t.Fatal("Another record's shared object was deleted")
@@ -180,7 +180,7 @@ func TestS3HTTPDeliveryAuthorizationAndSharedDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.Mu.Lock()
-	_, exists = fixture.Objects["delivery/objects/"+hash]
+	_, exists = fixture.Objects["delivery/objects/"+hash+"-1"]
 	fixture.Mu.Unlock()
 	if exists {
 		t.Fatal("Last-reference object was not collected")

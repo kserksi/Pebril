@@ -100,8 +100,8 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > 4 {
-		return fail(fmt.Errorf("Database schema version %d exceeds supported version 4", version))
+	if version > 5 {
+		return fail(fmt.Errorf("Database schema version %d exceeds supported version 5", version))
 	}
 	if version == 0 {
 		_, err = tx.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().UnixMilli())
@@ -149,6 +149,17 @@ INSERT INTO schema_migrations(version,applied_at) VALUES(3,CAST(strftime('%s','n
 			return fail(err)
 		}
 		if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)", time.Now().UTC().UnixMilli()); err != nil {
+			return fail(err)
+		}
+	}
+	if version < 5 {
+		if _, err = tx.Exec("ALTER TABLE deployment ADD COLUMN storage_backend TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fail(err)
+		}
+		if _, err = tx.Exec("CREATE TABLE object_keys(hash TEXT PRIMARY KEY,generation INTEGER NOT NULL CHECK(generation>=0),active_generation INTEGER CHECK(active_generation IS NULL OR (active_generation>=0 AND active_generation<=generation)))"); err != nil {
+			return fail(err)
+		}
+		if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)", time.Now().UTC().UnixMilli()); err != nil {
 			return fail(err)
 		}
 	}

@@ -30,10 +30,10 @@ func OpenMigrationSource(dir string) (*Store, int, error) {
 	}
 	s.DB.SetMaxOpenConns(1)
 	var version int
-	if err = s.DB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version < 3 || version > 4 {
+	if err = s.DB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version < 3 || version > 5 {
 		return fail()
 	}
-	if version == 4 {
+	if version >= 4 {
 		if err = s.DB.QueryRow("SELECT namespace FROM deployment WHERE id=1").Scan(&s.namespace); err != nil {
 			return fail()
 		}
@@ -63,7 +63,7 @@ func (s *Store) SetMigrationNamespace(namespace string) error {
 			return errors.New("Invalid source namespace identity")
 		}
 	}
-	for _, table := range []string{"users", "sessions", "upload_tokens", "images", "image_files"} {
+	for _, table := range []string{"users", "sessions", "upload_tokens", "images", "image_files", "object_keys"} {
 		var count int
 		if err := s.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
 			return err

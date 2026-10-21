@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"net/http"
@@ -20,7 +21,7 @@ import (
 	"github.com/kserksi/Pebril/internal/testutil"
 )
 
-func sourceFixture(t *testing.T, old bool) (config.Deployment, [][][]any) {
+func sourceFixture(t *testing.T, version int) (config.Deployment, [][][]any) {
 	t.Helper()
 	d, err := config.LoadDeployment(t.TempDir())
 	if err != nil {
@@ -88,8 +89,13 @@ func sourceFixture(t *testing.T, old bool) (config.Deployment, [][][]any) {
 	if _, err = database.DB.Exec("INSERT INTO upload_tokens(user_id,hash) VALUES(1,'token-hash')"); err != nil {
 		t.Fatal(err)
 	}
-	if old {
-		if _, err = database.DB.Exec("ALTER TABLE images DROP COLUMN delivered; DROP TABLE deployment; DELETE FROM schema_migrations WHERE version=4;"); err != nil {
+	if version < 5 {
+		if _, err = database.DB.Exec("ALTER TABLE deployment DROP COLUMN storage_backend; DROP TABLE object_keys; DELETE FROM schema_migrations WHERE version=5"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if version == 3 {
+		if _, err = database.DB.Exec("ALTER TABLE images DROP COLUMN delivered; DROP TABLE deployment; DELETE FROM schema_migrations WHERE version=4"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,9 +124,9 @@ func s3Target(t *testing.T) (config.Deployment, config.Storage, *testutil.S3Fixt
 	return d, config.Storage{Backend: "s3", S3: &config.S3{Endpoint: server.URL, Bucket: "images", Region: "test-region", AccessKeyID: "test-access", SecretAccessKey: "test-secret", Addressing: "path", Prefix: "migration/"}}, fixture
 }
 func TestOfflineMigrationPreservesSourceRecordsAndReruns(t *testing.T) {
-	for _, old := range []bool{false, true} {
-		t.Run(map[bool]string{false: "schema4", true: "schema3"}[old], func(t *testing.T) {
-			source, expected := sourceFixture(t, old)
+	for _, version := range []int{3, 4, 5} {
+		t.Run(fmt.Sprintf("schema%d", version), func(t *testing.T) {
+			source, expected := sourceFixture(t, version)
 			target, storage, _ := s3Target(t)
 			path := filepath.Join(source.DBDir, "pebril.db")
 			before, err := os.ReadFile(path)
@@ -146,7 +152,7 @@ func TestOfflineMigrationPreservesSourceRecordsAndReruns(t *testing.T) {
 			if err != nil || digest(expected) != digest(actual) {
 				t.Fatal("Record identities, credentials, snapshots or charges changed", err)
 			}
-			selected, err := objectstore.New(context.Background(), filepath.Join(target.PublicDir, ".objects"), storage, database.Namespace())
+			selected, err := objectstore.New(context.Background(), filepath.Join(target.PublicDir, ".objects"), storage, database.Namespace(), database)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,7 +189,7 @@ func TestOfflineMigrationPreservesSourceRecordsAndReruns(t *testing.T) {
 	}
 }
 func TestInterruptedAndForeignTargetMigration(t *testing.T) {
-	source, _ := sourceFixture(t, false)
+	source, _ := sourceFixture(t, 5)
 	target, storage, fixture := s3Target(t)
 	options := Options{Source: source, Target: target, SourceStorage: config.Storage{Backend: "local"}, TargetStorage: storage}
 	fixture.Mu.Lock()
@@ -210,7 +216,7 @@ func TestInterruptedAndForeignTargetMigration(t *testing.T) {
 	}
 }
 func TestReceivingSourceAndCancelledTransferStayUnchanged(t *testing.T) {
-	source, _ := sourceFixture(t, false)
+	source, _ := sourceFixture(t, 5)
 	target, storage, _ := s3Target(t)
 	db, err := store.Open(source.DBDir)
 	if err != nil {

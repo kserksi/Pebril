@@ -19,15 +19,18 @@ import (
 type S3Object struct {
 	Data  []byte
 	Owner string
+	Hash  string
 }
 type S3Fixture struct {
-	Mu        sync.Mutex
-	Objects   map[string]S3Object
-	Ranges    []string
-	Lists     int
-	Corrupt   string
-	Denied    bool
-	Uncertain bool
+	Mu            sync.Mutex
+	Objects       map[string]S3Object
+	Ranges        []string
+	Lists         int
+	Corrupt       string
+	Denied        bool
+	Uncertain     bool
+	DelayDelete   chan struct{}
+	DeleteStarted chan struct{}
 }
 
 func (f *S3Fixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +105,7 @@ func (f *S3Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			fail(400, "IncompleteBody")
 			return
 		}
-		f.Objects[key] = S3Object{Data: Data, Owner: r.Header.Get("X-Amz-Meta-Pebril-Namespace")}
+		f.Objects[key] = S3Object{Data: Data, Owner: r.Header.Get("X-Amz-Meta-Pebril-Namespace"), Hash: r.Header.Get("X-Amz-Meta-Pebril-Sha256")}
 		if f.Uncertain && strings.Contains(key, "/objects/") {
 			f.Uncertain = false
 			fail(500, "InternalError")
@@ -141,6 +144,9 @@ func (f *S3Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(Data)))
 		w.Header().Set("ETag", etag)
+		if object.Hash != "" {
+			w.Header().Set("X-Amz-Meta-Pebril-Sha256", object.Hash)
+		}
 		if object.Owner != "" {
 			w.Header().Set("X-Amz-Meta-Pebril-Namespace", object.Owner)
 		}
@@ -149,6 +155,15 @@ func (f *S3Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			w.Write(Data)
 		}
 	case "DELETE":
+		if wait := f.DelayDelete; wait != nil {
+			f.DelayDelete = nil
+			if f.DeleteStarted != nil {
+				close(f.DeleteStarted)
+			}
+			f.Mu.Unlock()
+			<-wait
+			f.Mu.Lock()
+		}
 		delete(f.Objects, key)
 		w.WriteHeader(204)
 	default:

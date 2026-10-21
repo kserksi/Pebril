@@ -120,7 +120,14 @@ func openMySQL(d config.Deployment, recovery, existingOnly bool) (*Store, error)
 	if err = s.DB.QueryRow("SELECT GET_LOCK(?,0)", name).Scan(&held); err != nil || !held.Valid || held.Int64 != 1 {
 		return fail(errors.New("Selected MySQL database is already in use or cannot acquire its instance lock"))
 	}
-	if err = s.mysqlSchema(existingOnly); err != nil {
+	if !recovery {
+		var previous string
+		e := s.DB.QueryRow("SELECT owner FROM deployment WHERE id=1").Scan(&previous)
+		if e == nil && previous != "" {
+			return fail(ErrDatabaseOwned)
+		}
+	}
+	if err = s.mysqlSchema(existingOnly, recovery); err != nil {
 		return fail(err)
 	}
 	var owner string
@@ -149,17 +156,17 @@ func openMySQL(d config.Deployment, recovery, existingOnly bool) (*Store, error)
 	return s, nil
 }
 
-func (s *Store) mysqlSchema(existingOnly bool) error {
+func (s *Store) mysqlSchema(existingOnly, recovery bool) error {
 	var tables int
 	if err := s.DB.QueryRow("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE()").Scan(&tables); err != nil {
 		return errors.New("Cannot inspect selected database schema")
 	}
 	if tables != 0 {
 		var version int
-		if err := s.DB.QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil || version != 4 {
+		if err := s.DB.QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil || version < 4 || version > 5 {
 			return errors.New("Unsupported, unrelated or incomplete MySQL schema; restore a matching backup or recreate the owned empty target")
 		}
-		if tables != 7 {
+		if version == 5 && tables != 8 || version == 4 && tables != 7 {
 			return errors.New("MySQL schema table inventory does not match the supported version")
 		}
 		for _, query := range []string{
@@ -176,6 +183,24 @@ func (s *Store) mysqlSchema(existingOnly bool) error {
 			}
 			rows.Close()
 		}
+		if version == 4 && !recovery {
+			if _, err := s.DB.Exec(mysqlObjectKeysDDL); err != nil {
+				return errors.New("Object-registry schema upgrade failed; retain the matching backup before retrying")
+			}
+			if _, err := s.DB.Exec("ALTER TABLE deployment ADD COLUMN storage_backend VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT ''"); err != nil {
+				return errors.New("Storage-binding schema upgrade failed; restore the matching backup before retrying")
+			}
+			if _, err := s.DB.Exec("INSERT INTO schema_migrations VALUES(5,?)", time.Now().UTC().UnixMilli()); err != nil {
+				return errors.New("Object-registry schema version update failed; retry only after checking the stopped database")
+			}
+		}
+		if version == 5 || version == 4 && !recovery {
+			rows, err := s.DB.Query("SELECT o.hash,o.generation,o.active_generation,d.storage_backend FROM object_keys o CROSS JOIN deployment d LIMIT 0")
+			if err != nil {
+				return errors.New("Invalid object-registry schema")
+			}
+			rows.Close()
+		}
 		return nil
 	}
 	if existingOnly {
@@ -188,7 +213,8 @@ func (s *Store) mysqlSchema(existingOnly bool) error {
 		`CREATE TABLE upload_tokens(user_id BIGINT PRIMARY KEY,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,FOREIGN KEY(user_id) REFERENCES users(id)) ENGINE=InnoDB`,
 		`CREATE TABLE images(id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,user_id BIGINT NOT NULL,state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,policy LONGBLOB NOT NULL,created_at BIGINT NOT NULL,format VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',bytes BIGINT NOT NULL DEFAULT 0,width BIGINT NOT NULL DEFAULT 0,height BIGINT NOT NULL DEFAULT 0,frames BIGINT NOT NULL DEFAULT 0,error TEXT NOT NULL,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',generation BIGINT NOT NULL DEFAULT 0,attempts BIGINT NOT NULL DEFAULT 0,next_run BIGINT NOT NULL DEFAULT 0,fallback TINYINT NOT NULL DEFAULT 0,delivered BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(user_id) REFERENCES users(id),INDEX image_tasks(state,user_id),INDEX conversion_schedule(state,next_run,user_id,created_at)) ENGINE=InnoDB`,
 		`CREATE TABLE image_files(image_id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,role VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,bytes BIGINT NOT NULL,format VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,width BIGINT NOT NULL,height BIGINT NOT NULL,frames BIGINT NOT NULL,PRIMARY KEY(image_id,role),FOREIGN KEY(image_id) REFERENCES images(id) ON DELETE CASCADE,INDEX image_file_hash(hash)) ENGINE=InnoDB`,
-		`CREATE TABLE deployment(id BIGINT PRIMARY KEY CHECK(id=1),namespace VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,owner VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '') ENGINE=InnoDB`,
+		`CREATE TABLE deployment(id BIGINT PRIMARY KEY CHECK(id=1),namespace VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,owner VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',storage_backend VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '') ENGINE=InnoDB`,
+		mysqlObjectKeysDDL,
 	}
 	for _, statement := range statements {
 		if _, err := s.DB.Exec(statement); err != nil {
@@ -207,7 +233,7 @@ func (s *Store) mysqlSchema(existingOnly bool) error {
 	if _, err = tx.Exec("INSERT INTO deployment(id,namespace) VALUES(1,?)", namespace); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("INSERT INTO schema_migrations VALUES(4,?)", time.Now().UTC().UnixMilli()); err != nil {
+	if _, err = tx.Exec("INSERT INTO schema_migrations VALUES(5,?)", time.Now().UTC().UnixMilli()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -270,3 +296,5 @@ func OpenExistingDeployment(d config.Deployment) (*Store, error) {
 type quietMySQLLog struct{}
 
 func (quietMySQLLog) Print(...any) {}
+
+const mysqlObjectKeysDDL = "CREATE TABLE IF NOT EXISTS object_keys(hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,generation BIGINT NOT NULL CHECK(generation>=0),active_generation BIGINT NULL,CHECK(active_generation IS NULL OR (active_generation>=0 AND active_generation<=generation))) ENGINE=InnoDB"
