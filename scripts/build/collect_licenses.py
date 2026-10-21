@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Collect pinned dependency declarations and original licenses; maintenance and distribution review remain separate."""
 import json
+import hashlib
+import zipfile
 import os
 import re
 from pathlib import Path
@@ -22,6 +24,35 @@ def licenses(directory, destination):
             count += 1
     if count == 0:
         raise RuntimeError(f'License not found: {directory}')
+
+def mysql_source(module, destination):
+    """Ship unmodified covered source with each executable distribution."""
+    metadata = json.loads(subprocess.check_output(['go', 'mod', 'download', '-json', module['Path'] + '@' + module['Version']], cwd=ROOT))
+    if metadata.get('Sum') != module.get('Sum') or not metadata.get('Zip'):
+        raise RuntimeError('MySQL source archive identity mismatch')
+    subprocess.run(['go', 'mod', 'verify'], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+    archive = Path(metadata['Zip'])
+    prefix = module['Path'] + '@' + module['Version'] + '/'
+    with zipfile.ZipFile(archive) as source:
+        if source.testzip() is not None:
+            raise RuntimeError('MySQL source archive is corrupt')
+        for name in source.namelist():
+            if not name.startswith(prefix) or '..' in Path(name).parts:
+                raise RuntimeError('Unsafe MySQL source archive')
+        for path in Path(module['Dir']).glob('*.go'):
+            if source.read(prefix + path.name) != path.read_bytes():
+                raise RuntimeError('MySQL covered source differs from compiled source')
+        if source.read(prefix + 'LICENSE') != (Path(module['Dir']) / 'LICENSE').read_bytes():
+            raise RuntimeError('MySQL source license mismatch')
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(archive, destination / 'source.zip')
+    notice = ('go-sql-driver/mysql ' + module['Version'] + '\n'
+              'This unmodified component is covered by the Mozilla Public License 2.0.\n'
+              'Its Source Code Form is supplied in source.zip beside this notice.\n'
+              'The original LICENSE beside this notice and inside source.zip contains its terms.\n'
+              'Pebril-owned files are separately licensed under MIT.\n'
+              'Source ZIP SHA256: ' + hashlib.sha256(archive.read_bytes()).hexdigest() + '\n')
+    (destination / 'SOURCE-NOTICE.txt').write_text(notice)
 
 def main():
     target = OUTPUT / 'third-party'
@@ -47,6 +78,8 @@ def main():
                 payload=bytes(int(value,16) for value in re.findall(r'0x([0-9a-fA-F]+)',body))
                 if payload in worker: raise RuntimeError(f'Unreviewed additional govips ICC profile linked: {profile}')
         licenses(Path(module['Dir']), target / 'go' / name)
+        if name == 'github.com/go-sql-driver/mysql':
+            mysql_source(module, target / 'go' / name)
         key = ('go', name, module['Version'])
         if key not in registry:
             raise RuntimeError(f'Go dependency lacks pinned-version license review: {key}')
@@ -63,7 +96,7 @@ def main():
         inventory.append(dict(ecosystem='rust', name=package['name'], version=package['version'], license=package['license'], checksum_in='native/Cargo.lock'))
     goroot = Path(subprocess.check_output(['go', 'env', 'GOROOT']).decode().strip())
     licenses(goroot, target / 'go-standard-library')
-    payload = dict(scope='Actual main/worker/deployment-helper Go runtime modules and Rust lockfile packages; see native/native-manifest.json for the native runtime.', review='Pinned declarations and original texts collected; see native/dependency-licenses.json for the quick-error exception and native/native-manifest.json for runtime scope. Full product release review remains separate.', packages=inventory)
+    payload = dict(scope='Actual main/worker/deployment-helper Go runtime modules and Rust lockfile packages; native/native-manifest.json describes the separate startup download catalog, not the link-time build input.', review='Pinned declarations and original texts collected; see native/dependency-licenses.json for the quick-error exception and build.json native_build and native-build-NOTICES.txt for the CI build input; native/native-manifest.json is the separate installer catalog. Full product release review remains separate.', packages=inventory)
     native_target = target / 'native'
     native_target.mkdir(exist_ok=True)
     for file in (ROOT / 'third-party').rglob('*'):

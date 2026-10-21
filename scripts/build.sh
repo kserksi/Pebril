@@ -31,7 +31,7 @@ Path("internal/nativeassets/runtime_worker.gz").write_bytes(gzip.compress((Path(
 PYWORKER
 CGO_ENABLED=1 go build -tags nomsgpack,bundled_native -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$(cat VERSION)" -o "$PEBRIL_BUILD_OUTPUT/pebril" ./cmd/pebril
 CGO_ENABLED=1 go build -tags nomsgpack,bundled_native -trimpath -buildvcs=false -ldflags "-s -w" -o "$PEBRIL_BUILD_OUTPUT/bin/pebril-runtime" ./cmd/pebril-runtime
-cp configs/.env.example configs/config.example.json LICENSE VERSION "$PEBRIL_BUILD_OUTPUT/"
+cp configs/.env.example configs/config.example.json configs/config.s3.example.json LICENSE VERSION "$PEBRIL_BUILD_OUTPUT/"
 install -m 0755 scripts/pebril.sh "$PEBRIL_BUILD_OUTPUT/pebril.sh"
 python3 scripts/build/collect_licenses.py
 python3 - <<'PYCODE'
@@ -44,8 +44,9 @@ for binary in binaries:
     maximum=max(((int(a),int(b)) for a,b in versions),default=(0,0))
     if maximum>(2,34):raise SystemExit(f"{binary} requires glibc {maximum}, exceeding the minimum target 2.34")
 identity={"version":Path("VERSION").read_text().strip(),"source_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"source_dirty":bool(subprocess.check_output(["git","status","--porcelain","--untracked-files=normal"],text=True).strip()),"target":"linux-x64-glibc","bootstrap":"pebril.sh"}
+identity["native_build"]={"pkg_config_version":subprocess.check_output(["pkg-config","--modversion","vips"],text=True).strip(),"startup_catalog":"third-party/native/native-manifest.json"}
 (output/"build.json").write_text(json.dumps(identity,indent=2)+"\n")
-files=binaries+[output/name for name in ["pebril.sh","VERSION","build.json",".env.example","config.example.json","LICENSE"]]
+files=binaries+[output/name for name in ["pebril.sh","VERSION","build.json",".env.example","config.example.json","config.s3.example.json","LICENSE"]]
 files.extend(p for p in (output/"third-party").rglob("*") if p.is_file())
 (output/"checksums.json").write_text(json.dumps({str(p.relative_to(output)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)},indent=2)+"\n")
 PYCODE

@@ -1,6 +1,8 @@
 package uploads
 
 import (
+	"context"
+	"github.com/kserksi/Pebril/internal/objectstore"
 	"os"
 	"path/filepath"
 
@@ -60,7 +62,7 @@ func (s *Service) Delete(id string, user int64, admin bool) error {
 	return os.RemoveAll(filepath.Join(s.conversionsDir(), id))
 }
 
-func (s *Service) OpenOriginal(id string, user int64, admin bool) (store.Image, store.ImageFile, *os.File, error) {
+func (s *Service) OpenOriginal(ctx context.Context, id string, user int64, admin bool) (store.Image, store.ImageFile, objectstore.File, error) {
 	if !validID(id) {
 		return store.Image{}, store.ImageFile{}, nil, os.ErrNotExist
 	}
@@ -77,6 +79,6 @@ func (s *Service) OpenOriginal(id string, user int64, admin bool) (store.Image, 
 	if !validHash(original.Hash) {
 		return image, original, nil, os.ErrNotExist
 	}
-	file, err := os.Open(filepath.Join(s.objectDir(), original.Hash))
+	file, err := s.files.Open(ctx, original.Hash, original.Bytes)
 	return image, original, file, err
 }

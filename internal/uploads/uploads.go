@@ -3,7 +3,6 @@ package uploads
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -13,11 +12,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/kserksi/Pebril/internal/config"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/objectstore"
 	"github.com/kserksi/Pebril/internal/resources"
 	"github.com/kserksi/Pebril/internal/store"
 )
@@ -40,6 +40,7 @@ type uploadJob struct {
 }
 
 type Service struct {
+	files      *objectstore.Objects
 	Resources  ResourceState
 	DB         *store.Store
 	Manager    *config.Manager
@@ -64,7 +65,13 @@ func New(db *store.Store, m *config.Manager, d config.Deployment, executable str
 func NewWithResources(db *store.Store, m *config.Manager, d config.Deployment, executable string, capability nativeprobe.Result, monitor ResourceState) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{Resources: monitor, DB: db, Manager: m, Deployment: d, Executable: executable, Capability: capability, ctx: ctx, cancel: cancel, semaphore: make(chan struct{}, m.Snapshot().Policy.ConversionConcurrency), uploads: map[string]*uploadJob{}, queue: conversionQueue{jobs: map[string]*conversionJob{}, wake: make(chan struct{}, 1)}}
-	for _, dir := range []string{s.incoming(), s.objectDir()} {
+	objects, err := objectstore.New(ctx, s.objectDir(), m.Storage(), db.Namespace())
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	s.files = objects
+	for _, dir := range []string{s.incoming()} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			cancel()
 			return nil, err
@@ -125,24 +132,9 @@ func NewWithResources(db *store.Store, m *config.Manager, d config.Deployment, e
 			}
 		}
 	}
-	entries, err = os.ReadDir(s.objectDir())
-	if err != nil {
+	if err = s.files.Reconcile(ctx, db.ObjectReferenced); err != nil {
 		cancel()
 		return nil, err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		decoded, e := hex.DecodeString(name)
-		owned := e == nil && len(decoded) == 32
-		if owned && !db.ObjectReferenced(name) || strings.HasPrefix(name, ".object-") {
-			if e = os.Remove(filepath.Join(s.objectDir(), name)); e != nil {
-				cancel()
-				return nil, e
-			}
-		}
 	}
 	ids, err := db.ReceivedUploads()
 	if err != nil {
@@ -189,6 +181,9 @@ func NewID() (string, error) {
 
 // Receive keeps unverified bytes outside image storage and never trusts supplied filenames.
 func (s *Service) Receive(user int64, openSource func(int64) (io.ReadCloser, error), cancelSource func() error) (store.Image, <-chan struct{}, error) {
+	if err := s.StorageReady(s.ctx); err != nil {
+		return store.Image{}, nil, objectstore.ErrUnavailable
+	}
 	s.lifecycle.Lock()
 	if s.closing {
 		s.lifecycle.Unlock()
@@ -397,63 +392,17 @@ func (s *Service) validate(ctx context.Context, id string) error {
 	if info.Size() > limit {
 		return errors.New("Validated image exceeds configured byte limit")
 	}
-	hash := sha256.New()
-	if _, err = io.Copy(hash, file); err != nil {
-		return err
-	}
-	digest := hex.EncodeToString(hash.Sum(nil))
-	if _, err = file.Seek(0, 0); err != nil {
-		return err
-	}
 	s.objects.Lock()
 	defer s.objects.Unlock()
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	target := filepath.Join(s.objectDir(), digest)
-	staged, err := os.CreateTemp(s.objectDir(), ".object-")
+	digest, count, err := s.files.Publish(ctx, output)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(staged.Name())
-	_, err = io.Copy(staged, file)
-	if err == nil {
-		err = staged.Sync()
-	}
-	closed := staged.Close()
-	if err == nil {
-		err = closed
-	}
-	if err != nil {
-		return err
-	}
-	// Hard-link publishes atomically without replacing another record's existing object.
-	if err = os.Link(staged.Name(), target); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		existing, e := os.Open(target)
-		if e != nil {
-			return e
-		}
-		check := sha256.New()
-		_, e = io.Copy(check, existing)
-		existing.Close()
-		if e != nil {
-			return e
-		}
-		if hex.EncodeToString(check.Sum(nil)) != digest {
-			return errors.New("Stored image object failed integrity verification")
-		}
-	}
-	dir, err := os.Open(s.objectDir())
-	if err != nil {
-		return err
-	}
-	err = dir.Sync()
-	dir.Close()
-	if err != nil {
-		return err
+	if count != info.Size() {
+		return objectstore.ErrIntegrity
 	}
 	image.Format = result.Format
 	image.Width = result.Width
@@ -466,9 +415,7 @@ func (s *Service) validate(ctx context.Context, id string) error {
 		image.State = "completed"
 	}
 	if err = s.DB.SaveUpload(image); err != nil {
-		if !s.DB.ObjectReferenced(digest) {
-			os.Remove(target)
-		}
+		s.collectObject(digest)
 		return err
 	}
 	if err = os.RemoveAll(scratch); err != nil {
@@ -491,4 +438,13 @@ func (s *Service) Result(id string, user int64) (store.Image, error) {
 		image.Error = "AVIF conversion is waiting for a normal startup"
 	}
 	return image, err
+}
+
+func (s *Service) StorageReady(ctx context.Context) error {
+	if s.files == nil {
+		return objectstore.ErrUnavailable
+	}
+	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return s.files.Check(probe)
 }

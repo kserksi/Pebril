@@ -189,12 +189,16 @@ func (s *Service) IssueToken(session Session) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	result, err := s.DB.DB.Exec("INSERT INTO upload_tokens(user_id,hash) SELECT s.user_id,? FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.user_id=? AND s.expires>? AND u.status!='deleted' ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash", Digest(token), Digest(session.Token), session.User.ID, time.Now().UnixMilli())
+	query := "INSERT INTO upload_tokens(user_id,hash) SELECT s.user_id,? FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.user_id=? AND s.expires>? AND u.status!='deleted' ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash"
+	if s.DB.Backend() == "mysql" {
+		query = strings.ReplaceAll(query, "ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash", "ON DUPLICATE KEY UPDATE hash=VALUES(hash)")
+	}
+	result, err := s.DB.DB.Exec(query, Digest(token), Digest(session.Token), session.User.ID, time.Now().UnixMilli())
 	if err != nil {
 		return "", err
 	}
 	n, err := result.RowsAffected()
-	if err == nil && n != 1 {
+	if err == nil && n != 1 && !(s.DB.Backend() == "mysql" && n == 2) {
 		return "", ErrCredentials
 	}
 	return token, err

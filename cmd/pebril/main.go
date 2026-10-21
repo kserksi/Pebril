@@ -19,13 +19,14 @@ import (
 	"github.com/kserksi/Pebril/internal/config"
 	"github.com/kserksi/Pebril/internal/imageproc"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/objectstore"
 	"github.com/kserksi/Pebril/internal/resources"
 	"github.com/kserksi/Pebril/internal/server"
 	"github.com/kserksi/Pebril/internal/store"
 	"github.com/kserksi/Pebril/internal/uploads"
 )
 
-var version = "0.0.9-dev"
+var version = "0.0.10-dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -63,6 +64,9 @@ func run() error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(nativeprobe.VerifyLocal(args[1], args[2], args[3], args[4], policy))
 	}
+	if len(args) > 0 && args[0] == "migrate" {
+		return migrateOffline(args[1:])
+	}
 	command, allow, err := commandArgs(args)
 	if err != nil {
 		return err
@@ -82,6 +86,9 @@ func run() error {
 	deploy, err := config.LoadDeployment(filepath.Dir(executable))
 	if err != nil {
 		return err
+	}
+	if command == "recover-database" {
+		return recoverDatabase(deploy)
 	}
 	if command == "reset-admin" {
 		return resetAdministrator(deploy)
@@ -109,10 +116,23 @@ func run() error {
 		}
 	}
 	if command == "check" {
-		if e := json.NewEncoder(os.Stdout).Encode(capability); e != nil {
+		databaseErr := store.CheckDeployment(deploy)
+		storageErr := objectstore.CheckConnection(ctx, manager.Storage())
+		report := struct {
+			nativeprobe.Result
+			Database map[string]any `json:"database"`
+			Storage  map[string]any `json:"storage"`
+		}{capability, map[string]any{"backend": deploy.DatabaseBackend, "ready": databaseErr == nil}, map[string]any{"backend": manager.Storage().Backend, "ready": storageErr == nil}}
+		if e := json.NewEncoder(os.Stdout).Encode(report); e != nil {
 			return e
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		if databaseErr != nil {
+			return databaseErr
+		}
+		return storageErr
 	}
 	if err != nil {
 		return err
@@ -128,11 +148,12 @@ func run() error {
 		return err
 	}
 	defer monitor.Close()
-	database, err := store.Open(deploy.DBDir)
+	database, err := store.OpenDeployment(deploy)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
+	go database.Monitor(ctx)
 	authentication, err := auth.New(database)
 	if err != nil {
 		return err
@@ -165,6 +186,9 @@ func run() error {
 			return nil
 		}
 		return err
+	case <-database.Lost():
+		httpServer.Close()
+		return store.ErrDatabaseLost
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -186,7 +210,7 @@ func commandArgs(args []string) (string, bool, error) {
 		switch arg {
 		case "--allow-low-memory":
 			allow = true
-		case "serve", "check", "version", "reset-admin":
+		case "serve", "check", "version", "reset-admin", "recover-database":
 			if selected {
 				return "", false, errors.New("Choose one service command")
 			}
@@ -195,8 +219,8 @@ func commandArgs(args []string) (string, bool, error) {
 			return "", false, errors.New("Usage: pebril [serve|check|version] [--allow-low-memory], or pebril reset-admin")
 		}
 	}
-	if command == "reset-admin" && len(args) != 1 {
-		return "", false, errors.New("Usage: pebril reset-admin (no additional arguments)")
+	if (command == "reset-admin" || command == "recover-database") && len(args) != 1 {
+		return "", false, errors.New("Offline commands accept no additional arguments")
 	}
 	return command, allow, nil
 }

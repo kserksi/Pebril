@@ -123,7 +123,7 @@ func (s *Store) DeleteImage(id string, user int64, admin bool) ([]string, error)
 	if _, err = tx.Exec("DELETE FROM images WHERE id=?", id); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec("UPDATE users SET used=MAX(0,used-?) WHERE id=?", image.TotalBytes, image.UserID); err != nil {
+	if _, err = tx.Exec(s.subtractUsageSQL(), image.TotalBytes, image.UserID); err != nil {
 		return nil, err
 	}
 	return hashes, tx.Commit()

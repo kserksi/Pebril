@@ -32,6 +32,7 @@ type Image struct {
 	Width      int             `json:"width,omitempty"`
 	Height     int             `json:"height,omitempty"`
 	Frames     int             `json:"frames,omitempty"`
+	Delivered  int64           `json:"-"`
 	Created    int64           `json:"created_at"`
 	URL        string          `json:"url,omitempty"`
 	Error      string          `json:"error,omitempty"`
@@ -75,7 +76,7 @@ func (s *Store) AcceptUpload(id string, user int64, policy config.Snapshot) erro
 	if own >= 10 || total >= 10000 {
 		return ErrCapacity
 	}
-	_, err = tx.Exec("INSERT INTO images(id,user_id,state,policy,created_at) VALUES(?,?,'receiving',?,?)", id, user, snapshot, time.Now().UTC().UnixMilli())
+	_, err = tx.Exec("INSERT INTO images(id,user_id,state,policy,created_at,error) VALUES(?,?,'receiving',?,?,'')", id, user, snapshot, time.Now().UTC().UnixMilli())
 	if err != nil {
 		return err
 	}
@@ -95,7 +96,7 @@ func (s *Store) SaveUpload(image Image) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec("UPDATE images SET state=?,format=?,bytes=?,width=?,height=?,frames=?,hash=?,error='' WHERE id=? AND state='received'", image.State, image.Format, image.Bytes, image.Width, image.Height, image.Frames, image.Hash, image.ID)
+	result, err := tx.Exec("UPDATE images SET state=?,format=?,bytes=?,width=?,height=?,frames=?,hash=?,error='',delivered=? WHERE id=? AND state='received'", image.State, image.Format, image.Bytes, image.Width, image.Height, image.Frames, image.Hash, time.Now().UTC().UnixMilli(), image.ID)
 	if err != nil {
 		return err
 	}
@@ -136,7 +137,7 @@ func (s *Store) Image(id string) (Image, error) {
 func readImage(tx *sql.Tx, id string) (Image, error) {
 	var i Image
 	var policy []byte
-	err := tx.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary)
+	err := tx.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback,delivered FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary, &i.Delivered)
 	if err != nil {
 		return i, err
 	}

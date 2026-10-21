@@ -2,11 +2,8 @@ package uploads
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -18,6 +15,7 @@ import (
 
 	"github.com/kserksi/Pebril/internal/imageproc"
 	"github.com/kserksi/Pebril/internal/nativeprobe"
+	"github.com/kserksi/Pebril/internal/objectstore"
 	"github.com/kserksi/Pebril/internal/store"
 )
 
@@ -162,76 +160,17 @@ func (s *Service) runConversion(ctx context.Context, cancel context.CancelFunc, 
 
 func (s *Service) collectObject(hash string) {
 	if validHash(hash) && !s.DB.ObjectReferenced(hash) {
-		if err := os.Remove(filepath.Join(s.objectDir(), hash)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := s.files.Remove(s.ctx, hash); err != nil {
 			slog.Warn("Cannot remove unreferenced image object")
 		}
 	}
 }
 func (s *Service) storeFile(path, role string, result nativeprobe.ImageResult) (store.ImageFile, error) {
-	f, err := os.Open(path)
+	hash, size, err := s.files.Publish(s.ctx, path)
 	if err != nil {
 		return store.ImageFile{}, err
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return store.ImageFile{}, err
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return store.ImageFile{}, errors.New("Invalid conversion output")
-	}
-	digest := sha256.New()
-	if _, err = io.Copy(digest, f); err != nil {
-		return store.ImageFile{}, err
-	}
-	hash := hex.EncodeToString(digest.Sum(nil))
-	target := filepath.Join(s.objectDir(), hash)
-	stage, err := os.CreateTemp(s.objectDir(), ".object-")
-	if err != nil {
-		return store.ImageFile{}, err
-	}
-	defer os.Remove(stage.Name())
-	if _, err = f.Seek(0, 0); err == nil {
-		_, err = io.Copy(stage, f)
-	}
-	if err == nil {
-		err = stage.Sync()
-	}
-	closed := stage.Close()
-	if err == nil {
-		err = closed
-	}
-	if err != nil {
-		return store.ImageFile{}, err
-	}
-	if err = os.Link(stage.Name(), target); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return store.ImageFile{}, err
-		}
-		existing, e := os.Open(target)
-		if e != nil {
-			return store.ImageFile{}, e
-		}
-		check := sha256.New()
-		_, e = io.Copy(check, existing)
-		existing.Close()
-		if e != nil {
-			return store.ImageFile{}, e
-		}
-		if hex.EncodeToString(check.Sum(nil)) != hash {
-			return store.ImageFile{}, errors.New("Stored image integrity verification failed")
-		}
-	}
-	dir, err := os.Open(s.objectDir())
-	if err != nil {
-		return store.ImageFile{}, err
-	}
-	err = dir.Sync()
-	dir.Close()
-	if err != nil {
-		return store.ImageFile{}, err
-	}
-	return store.ImageFile{Role: role, Hash: hash, Bytes: info.Size(), Format: result.Format, Width: result.Width, Height: result.Height, Frames: result.Frames}, nil
+	return store.ImageFile{Role: role, Hash: hash, Bytes: size, Format: result.Format, Width: result.Width, Height: result.Height, Frames: result.Frames}, nil
 }
 func (s *Service) convertImage(ctx context.Context, image store.Image) error {
 	original := store.FileRole(image.Files, "original")
@@ -250,7 +189,18 @@ func (s *Service) convertImage(ctx context.Context, image store.Image) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	request := imageproc.Request{Input: filepath.Join(s.objectDir(), original.Hash), Directory: dir, Rust: filepath.Join(s.Deployment.NativeDir, "libpebril_native.so"), SourceFormat: original.Format, Frames: original.Frames, Policy: image.Policy.Policy}
+	input := filepath.Join(s.objectDir(), original.Hash)
+	if s.files.Remote() {
+		input = filepath.Join(dir, "input")
+		if err := s.files.Stage(ctx, original.Hash, original.Bytes, input); err != nil {
+			return err
+		}
+		dir = filepath.Join(dir, "output")
+		if err := os.Mkdir(dir, 0700); err != nil {
+			return err
+		}
+	}
+	request := imageproc.Request{Input: input, Directory: dir, Rust: filepath.Join(s.Deployment.NativeDir, "libpebril_native.so"), SourceFormat: original.Format, Frames: original.Frames, Policy: image.Policy.Policy}
 	result, err := imageproc.Convert(ctx, filepath.Join(s.Deployment.NativeDir, "pebril-image-worker"), s.Capability.VipsPath, request)
 	if err != nil {
 		return err
@@ -406,13 +356,13 @@ func (s *Service) Retry(id string, user int64) error {
 	return nil
 }
 
-func (s *Service) OpenPublic(id string, cover bool) (store.Image, store.ImageFile, *os.File, error) {
+func (s *Service) OpenPublic(ctx context.Context, id string, cover bool) (store.Image, store.ImageFile, objectstore.File, error) {
 	s.objects.Lock()
 	defer s.objects.Unlock()
 	image, reference, err := s.PublicFile(id, cover)
 	if err != nil {
 		return image, reference, nil, err
 	}
-	file, err := os.Open(filepath.Join(s.objectDir(), reference.Hash))
+	file, err := s.files.Open(ctx, reference.Hash, reference.Bytes)
 	return image, reference, file, err
 }

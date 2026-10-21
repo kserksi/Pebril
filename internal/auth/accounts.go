@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/kserksi/Pebril/internal/store"
-	"github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -34,8 +33,7 @@ func (s *Service) Register(username, password string) (store.User, error) {
 	}
 	result, err := tx.Exec("INSERT INTO users(username,password,quota) VALUES(?,?,?)", username, hash, store.DefaultQuota)
 	if err != nil {
-		var constraint sqlite3.Error
-		if errors.As(err, &constraint) && constraint.ExtendedCode == sqlite3.ErrConstraintUnique {
+		if store.IsUnique(err) {
 			return store.User{}, ErrUsernameTaken
 		}
 		return store.User{}, err

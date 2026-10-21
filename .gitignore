@@ -68,3 +68,6 @@ __pycache__/
 
 # Cargo output from direct native-module builds
 /native/target/
+
+# Private offline migration state
+/.pebril-migration.json

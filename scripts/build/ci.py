@@ -14,7 +14,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD = ['pebril', 'bin/pebril-image-worker', 'bin/pebril-runtime', 'bin/libpebril_native.so',
-           'pebril.sh', 'VERSION', 'build.json', '.env.example', 'config.example.json', 'LICENSE', 'README.md']
+           'pebril.sh', 'VERSION', 'build.json', '.env.example', 'config.example.json', 'config.s3.example.json', 'LICENSE', 'README.md']
 
 
 def prepare(root):
@@ -61,6 +61,11 @@ def package(root):
     identity = json.loads((output / 'build.json').read_text())
     if identity['version'] != version or not re.fullmatch(r'[0-9a-f]{40}', identity['source_commit']):
         raise RuntimeError('Package identity does not match VERSION/source')
+    expected_native = json.loads((root / 'third-party/libvips/8.16.1/linux-x64-glibc-r2/manifest.json').read_text())
+    actual_native = json.loads((native / 'versions.json').read_text())
+    if (identity.get('native_build', {}).get('pkg_config_version') != expected_native['version']
+            or actual_native.get('vips') != expected_native['version']):
+        raise RuntimeError('CI native build provenance mismatch; the startup catalog is a separate scope')
     shutil.copy2(root / 'README.md', output / 'README.md')
     shutil.copy2(native / 'THIRD-PARTY-NOTICES.md', output / 'third-party/native-build-NOTICES.txt')
     files = sorted(PAYLOAD + [str(p.relative_to(output)) for p in (output / 'third-party').rglob('*') if p.is_file()])

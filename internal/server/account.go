@@ -209,6 +209,8 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 	}))
 	router.GET("/image/:id", func(c *gin.Context) { publicImage(upload, false, c) })
 	router.GET("/image/:id/cover", func(c *gin.Context) { publicImage(upload, true, c) })
+	router.HEAD("/image/:id", func(c *gin.Context) { publicImage(upload, false, c) })
+	router.HEAD("/image/:id/cover", func(c *gin.Context) { publicImage(upload, true, c) })
 }
 
 // accountBody enforces exact JSON field names and rejects ambiguous duplicate/null input.

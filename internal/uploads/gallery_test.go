@@ -2,6 +2,7 @@ package uploads
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -48,18 +49,18 @@ func TestOriginalDownloadAndSharedDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin, _ := adminResult.LastInsertId()
-	if _, _, file, err := s.OpenOriginal(first, stranger, false); !errors.Is(err, sql.ErrNoRows) || file != nil {
+	if _, _, file, err := s.OpenOriginal(context.Background(), first, stranger, false); !errors.Is(err, sql.ErrNoRows) || file != nil {
 		t.Fatalf("non-owner original: %v", err)
 	}
 	if err = s.Delete(first, stranger, true); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("forged administrator deletion: %v", err)
 	}
-	_, _, opened, err := s.OpenOriginal(first, owner, false)
+	_, _, opened, err := s.OpenOriginal(context.Background(), first, owner, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer opened.Close()
-	_, _, adminFile, err := s.OpenOriginal(first, admin, true)
+	_, _, adminFile, err := s.OpenOriginal(context.Background(), first, admin, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestOriginalDownloadAndSharedDeletion(t *testing.T) {
 	if err = s.Manager.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, file, err := s.OpenOriginal(first, owner, false); !errors.Is(err, ErrOriginalDownloadDisabled) || file != nil {
+	if _, _, file, err := s.OpenOriginal(context.Background(), first, owner, false); !errors.Is(err, ErrOriginalDownloadDisabled) || file != nil {
 		t.Fatalf("live original-download switch: %v", err)
 	}
 	if err = s.Delete(first, admin, true); err != nil {
@@ -83,7 +84,7 @@ func TestOriginalDownloadAndSharedDeletion(t *testing.T) {
 	if err != nil || !bytes.Equal(payload, []byte("controlled conversion input")) {
 		t.Fatalf("deletion invalidated an open download: %q, %v", payload, err)
 	}
-	if _, _, file, err := s.OpenPublic(first, false); err == nil || file != nil {
+	if _, _, file, err := s.OpenPublic(context.Background(), first, false); err == nil || file != nil {
 		t.Fatal("deleted public record still opens")
 	}
 	if _, err = os.Stat(filepath.Join(s.objectDir(), coverHash)); !errors.Is(err, os.ErrNotExist) {
@@ -115,7 +116,7 @@ func TestOriginalDownloadRequiresRetainedFile(t *testing.T) {
 	if err = os.Remove(filepath.Join(s.objectDir(), original.Hash)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, file, err := s.OpenOriginal(id, owner, false); !errors.Is(err, os.ErrNotExist) || file != nil {
+	if _, _, file, err := s.OpenOriginal(context.Background(), id, owner, false); !errors.Is(err, os.ErrNotExist) || file != nil {
 		t.Fatalf("missing physical original: %v", err)
 	}
 	result := original
@@ -123,7 +124,7 @@ func TestOriginalDownloadRequiresRetainedFile(t *testing.T) {
 	if err = s.DB.FinishConversion(image, []store.ImageFile{result}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, file, err := s.OpenOriginal(id, owner, false); !errors.Is(err, os.ErrNotExist) || file != nil {
+	if _, _, file, err := s.OpenOriginal(context.Background(), id, owner, false); !errors.Is(err, os.ErrNotExist) || file != nil {
 		t.Fatalf("result-only image exposed an original: %v", err)
 	}
 }

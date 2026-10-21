@@ -36,10 +36,10 @@ func TestStoreLockMigrationAndFutureVersion(t *testing.T) {
 		t.Fatal(e)
 	}
 	var count int
-	if e = s.DB.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); e != nil || count != 3 {
+	if e = s.DB.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); e != nil || count != 4 {
 		t.Fatal("Migration is not idempotent", e)
 	}
-	if _, e = s.DB.Exec("INSERT INTO schema_migrations VALUES(4,0)"); e != nil {
+	if _, e = s.DB.Exec("INSERT INTO schema_migrations VALUES(5,0)"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -59,7 +59,7 @@ func TestUpgradeVersionTwoPreservesRecordsAndCharges(t *testing.T) {
  INSERT INTO images(id,user_id,state,policy,created_at,hash,bytes,format,frames) VALUES('original',1,'queued','{"revision":1,"policy":{}}',0,'input',8,'png',1),('safe',1,'completed','{"revision":1,"policy":{}}',0,'output',12,'svg',1);
  DROP TABLE image_files; DROP INDEX conversion_schedule;
  ALTER TABLE images DROP COLUMN generation; ALTER TABLE images DROP COLUMN attempts; ALTER TABLE images DROP COLUMN next_run; ALTER TABLE images DROP COLUMN fallback;
- DELETE FROM schema_migrations WHERE version=3;`)
+ ALTER TABLE images DROP COLUMN delivered; DROP TABLE deployment; DELETE FROM schema_migrations WHERE version>=3;`)
 	if err != nil {
 		t.Fatal(err)
 	}

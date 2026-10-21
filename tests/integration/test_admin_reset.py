@@ -33,6 +33,9 @@ def fixture(root):
             CREATE TABLE upload_tokens(user_id INTEGER PRIMARY KEY,hash TEXT);
             INSERT INTO upload_tokens VALUES(1,'owner-token');
             INSERT INTO upload_tokens VALUES(2,'member-token');
+            CREATE TABLE images(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),state TEXT NOT NULL,policy BLOB NOT NULL,created_at INTEGER NOT NULL,format TEXT NOT NULL DEFAULT '',bytes INTEGER NOT NULL DEFAULT 0,width INTEGER NOT NULL DEFAULT 0,height INTEGER NOT NULL DEFAULT 0,frames INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',hash TEXT NOT NULL DEFAULT '',generation INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,next_run INTEGER NOT NULL DEFAULT 0,fallback INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE image_files(image_id TEXT NOT NULL REFERENCES images(id) ON DELETE CASCADE,role TEXT NOT NULL,hash TEXT NOT NULL,bytes INTEGER NOT NULL,format TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,frames INTEGER NOT NULL,PRIMARY KEY(image_id,role));
+
         ''')
     (database / 'pebril.db').chmod(0o600)
     (root / '.env').write_text('PEBRIL_DB_DIR=records\n')

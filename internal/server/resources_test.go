@@ -91,7 +91,11 @@ func TestResourceHTTPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := &httpResourceState{resources.State{Concurrency: 1, Cooldown: true, Warnings: []resources.Warning{{Code: "memory-monitor", Message: "private-resource-warning"}}, Memory: &resources.Memory{Used: 96, Limit: 100, Total: 200}}}
-	upload := &uploads.Service{DB: db, Manager: manager, Deployment: deployment, Resources: state}
+	upload, err := uploads.NewWithResources(db, manager, deployment, "/bin/false", nativeprobe.Result{Ready: true}, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(upload.Close)
 	capability := nativeprobe.Result{Ready: true}
 	handler := HandlerWithUploads("0.0.6-dev", manager, db, capability, authentication, upload)
 	username, err := auth.Secret()
@@ -174,7 +178,7 @@ func TestResourceHTTPBoundary(t *testing.T) {
 			status := resourceRequest(handler, "GET", "/api/v1/status", session, "", nil)
 			fields := resourceJSON(t, status, 200)
 			resourcePrivateFieldsAbsent(t, status, 200)
-			if len(fields) != 6 || fields["native"] == nil || fields["version"] == nil {
+			if len(fields) != 8 || fields["native"] == nil || fields["version"] == nil || fields["database"] == nil || fields["storage"] == nil {
 				t.Fatalf("public status shape changed: %s", status.Body.String())
 			}
 		}

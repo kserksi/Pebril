@@ -1,0 +1,14 @@
+{
+  "storage": {
+    "backend": "s3",
+    "s3": {
+      "endpoint": "https://objects.example.invalid",
+      "bucket": "your-image-bucket",
+      "region": "YOUR_SIGNING_REGION",
+      "addressing": "path",
+      "prefix": "your-exclusive-pebril-prefix/",
+      "access_key_id": "YOUR_ACCESS_KEY_ID",
+      "secret_access_key": "YOUR_SECRET_ACCESS_KEY"
+    }
+  }
+}

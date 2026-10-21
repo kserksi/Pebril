@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -55,7 +56,11 @@ func readFiles(q interface {
 }
 func (s *Store) NextConversion(afterUser int64, restricted bool) (string, error) {
 	var id string
-	err := s.DB.QueryRow(`SELECT id FROM images WHERE (state='queued' OR (state='retry_wait' AND next_run<=?)) AND (NOT ? OR (format!='avif' AND (frames>1 OR json_extract(policy,'$.policy.static_format')!='avif'))) ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,CASE WHEN user_id>? THEN 0 ELSE 1 END,user_id,created_at,id LIMIT 1`, time.Now().UnixMilli(), restricted, afterUser).Scan(&id)
+	query := `SELECT id FROM images WHERE (state='queued' OR (state='retry_wait' AND next_run<=?)) AND (NOT ? OR (format!='avif' AND (frames>1 OR json_extract(policy,'$.policy.static_format')!='avif'))) ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,CASE WHEN user_id>? THEN 0 ELSE 1 END,user_id,created_at,id LIMIT 1`
+	if s.Backend() == "mysql" {
+		query = strings.ReplaceAll(query, "json_extract(policy,'$.policy.static_format')", "JSON_UNQUOTE(JSON_EXTRACT(CAST(policy AS JSON),'$.policy.static_format'))")
+	}
+	err := s.DB.QueryRow(query, time.Now().UnixMilli(), restricted, afterUser).Scan(&id)
 	return id, err
 }
 func (s *Store) ClaimConversion(id string) (Image, error) {
@@ -89,10 +94,10 @@ func (s *Store) FinishConversion(image Image, files []ImageFile) error {
 	}
 	defer tx.Rollback()
 	var old int64
-	if err = tx.QueryRow("SELECT COALESCE(SUM(bytes),0) FROM (SELECT MAX(bytes) AS bytes FROM image_files WHERE image_id=? GROUP BY hash)", image.ID).Scan(&old); err != nil {
+	if err = tx.QueryRow("SELECT COALESCE(SUM(bytes),0) FROM (SELECT MAX(bytes) AS bytes FROM image_files WHERE image_id=? GROUP BY hash) AS logical_files", image.ID).Scan(&old); err != nil {
 		return err
 	}
-	result, err := tx.Exec("UPDATE images SET state='completed',hash=?,format=?,bytes=?,width=?,height=?,frames=?,error='',next_run=0,fallback=0 WHERE id=? AND state='processing' AND generation=?", image.Hash, image.Format, image.Bytes, image.Width, image.Height, image.Frames, image.ID, image.Generation)
+	result, err := tx.Exec("UPDATE images SET state='completed',hash=?,format=?,bytes=?,width=?,height=?,frames=?,error='',next_run=0,fallback=0,delivered=? WHERE id=? AND state='processing' AND generation=?", image.Hash, image.Format, image.Bytes, image.Width, image.Height, image.Frames, time.Now().UTC().UnixMilli(), image.ID, image.Generation)
 	if err != nil {
 		return err
 	}
@@ -138,7 +143,7 @@ func (s *Store) ConversionFailed(image Image, message string) error {
 		if _, err = tx.Exec("DELETE FROM image_files WHERE image_id=?", image.ID); err != nil {
 			return err
 		}
-		if _, err = tx.Exec("UPDATE users SET used=MAX(0,used-?) WHERE id=?", image.TotalBytes, image.UserID); err != nil {
+		if _, err = tx.Exec(s.subtractUsageSQL(), image.TotalBytes, image.UserID); err != nil {
 			return err
 		}
 		if _, err = tx.Exec("UPDATE images SET hash='',bytes=0 WHERE id=?", image.ID); err != nil {

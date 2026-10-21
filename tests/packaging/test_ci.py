@@ -22,12 +22,28 @@ def main():
             path = output / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(name)
-        (output / 'build.json').write_text(json.dumps({'version': '0.0.5-dev', 'source_commit': 'a' * 40}))
+        identity={'version':'0.0.5-dev','source_commit':'a'*40,'native_build':{'pkg_config_version':'8.16.1'}}
+        (output / 'build.json').write_text(json.dumps(identity))
         (root / 'VERSION').write_text('0.0.5-dev\n')
         (root / 'README.md').write_text('Public readme')
         notice = root / '.build/ci/native/THIRD-PARTY-NOTICES.md'
         notice.parent.mkdir(parents=True)
         notice.write_text('Original third-party notice')
+        (notice.parent / 'versions.json').write_text(json.dumps({'vips':'8.16.1'}))
+        manifest=root/'third-party/libvips/8.16.1/linux-x64-glibc-r2/manifest.json'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({'version':'8.16.1'}))
+        identity['native_build']['pkg_config_version']='8.18.5'
+        (output/'build.json').write_text(json.dumps(identity))
+        try:
+            ci.package(root)
+        except RuntimeError as error:
+            assert 'provenance mismatch' in str(error)
+        else:
+            raise AssertionError('Mismatched CI build headers were accepted')
+        identity['native_build']['pkg_config_version']='8.16.1'
+        (output/'build.json').write_text(json.dumps(identity))
+
         (output / 'third-party').mkdir()
         for name in ['.env', 'config.json', 'private.db', 'AGENTS.md']:
             (output / name).write_text('private fixture')

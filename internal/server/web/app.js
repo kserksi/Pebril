@@ -8,7 +8,7 @@ async function refresh() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const list = document.createElement('dl');
-    const rows = [['Version', data.version], ['Configuration revision', data.config_revision], ['SQLite', data.sqlite ? 'Available' : 'Failed'], ['libvips', data.native.libvips_version], ['SVG sanitization', data.native.svg ? 'Self-test passed' : 'Failed'], ['GIF animation', data.native.gif ? 'Self-test passed' : 'Failed'], ['AVIF', data.native.avif_enabled ? 'Enabled' : 'Disabled']];
+    const rows = [['Version', data.version], ['Configuration revision', data.config_revision], ['Database', data.database ? `${data.database.backend}: ${data.database.ready ? 'Available' : 'Failed'}` : (data.sqlite ? 'SQLite: Available' : 'Failed')], ['libvips', data.native.libvips_version], ['SVG sanitization', data.native.svg ? 'Self-test passed' : 'Failed'], ['GIF animation', data.native.gif ? 'Self-test passed' : 'Failed'], ['AVIF', data.native.avif_enabled ? 'Enabled' : 'Disabled']];
     for (const [name, value] of rows) {
       const label = document.createElement('dt');
       const result = document.createElement('dd');

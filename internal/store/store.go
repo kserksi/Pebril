@@ -1,12 +1,17 @@
 package store
 
 import (
+	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/kserksi/Pebril/internal/config"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,12 +19,23 @@ import (
 )
 
 type Store struct {
-	DB      *sql.DB
-	lock    *os.File
-	Started time.Time
+	DB        *sql.DB
+	lock      *os.File
+	Started   time.Time
+	backend   string
+	namespace string
+	owner     string
+	lost      chan struct{}
+	lostOnce  sync.Once
 }
 
-func Open(dir string) (*Store, error) {
+func OpenDeployment(d config.Deployment) (*Store, error) {
+	if d.DatabaseBackend == "mysql" {
+		return openMySQL(d, false, false)
+	}
+	return Open(d.DBDir)
+}
+func localLock(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -30,6 +46,26 @@ func Open(dir string) (*Store, error) {
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		lock.Close()
 		return nil, errors.New("Data directory is already used by another instance")
+	}
+	return lock, nil
+}
+func identity() (string, error) {
+	var data [16]byte
+	_, err := rand.Read(data[:])
+	return hex.EncodeToString(data[:]), err
+}
+func (s *Store) Backend() string {
+	if s.backend == "mysql" {
+		return "mysql"
+	}
+	return "sqlite"
+}
+func (s *Store) Namespace() string     { return s.namespace }
+func (s *Store) Lost() <-chan struct{} { return s.lost }
+func Open(dir string) (*Store, error) {
+	lock, err := localLock(dir)
+	if err != nil {
+		return nil, err
 	}
 	s := &Store{lock: lock, Started: time.Now()}
 	fail := func(e error) (*Store, error) { s.Close(); return nil, e }
@@ -64,8 +100,8 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > 3 {
-		return fail(fmt.Errorf("Database schema version %d exceeds supported version 3", version))
+	if version > 4 {
+		return fail(fmt.Errorf("Database schema version %d exceeds supported version 4", version))
 	}
 	if version == 0 {
 		_, err = tx.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().UnixMilli())
@@ -101,16 +137,75 @@ INSERT INTO schema_migrations(version,applied_at) VALUES(3,CAST(strftime('%s','n
 			return fail(err)
 		}
 	}
+	if version < 4 {
+		namespace, e := identity()
+		if e != nil {
+			return fail(e)
+		}
+		if _, err = tx.Exec("CREATE TABLE deployment(id INTEGER PRIMARY KEY CHECK(id=1),namespace TEXT NOT NULL,owner TEXT NOT NULL DEFAULT ''); ALTER TABLE images ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			return fail(err)
+		}
+		if _, err = tx.Exec("INSERT INTO deployment(id,namespace) VALUES(1,?)", namespace); err != nil {
+			return fail(err)
+		}
+		if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)", time.Now().UTC().UnixMilli()); err != nil {
+			return fail(err)
+		}
+	}
+	if err = tx.QueryRow("SELECT namespace FROM deployment WHERE id=1").Scan(&s.namespace); err != nil {
+		return fail(err)
+	}
 	if err = tx.Commit(); err != nil {
 		return fail(err)
 	}
 	return s, nil
 }
-func (s *Store) Ping() error { return s.DB.Ping() }
+func (s *Store) markLost() { s.lostOnce.Do(func() { close(s.lost) }) }
+func (s *Store) Ping() error {
+	if s.Backend() == "mysql" {
+		select {
+		case <-s.lost:
+			return ErrDatabaseLost
+		default:
+		}
+	}
+	err := s.DB.Ping()
+	if err != nil && s.Backend() == "mysql" {
+		s.markLost()
+	}
+	return err
+}
+func (s *Store) Monitor(ctx context.Context) {
+	if s.Backend() != "mysql" {
+		return
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.Ping() != nil {
+				return
+			}
+		}
+	}
+}
 func (s *Store) Close() error {
 	var err error
 	if s.DB != nil {
-		err = s.DB.Close()
+		if s.owner != "" {
+			select {
+			case <-s.lost:
+			default:
+				_, err = s.DB.Exec("UPDATE deployment SET owner='' WHERE id=1 AND owner=?", s.owner)
+			}
+		}
+		closeErr := s.DB.Close()
+		if err == nil {
+			err = closeErr
+		}
 	}
 	if s.lock != nil {
 		syscall.Flock(int(s.lock.Fd()), syscall.LOCK_UN)

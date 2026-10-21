@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -19,15 +20,18 @@ import (
 )
 
 type Deployment struct {
-	Root       string `json:"-"`
-	Listen     string `json:"listen"`
-	DataDir    string `json:"-"`
-	PublicDir  string `json:"-"`
-	PrivateDir string `json:"-"`
-	DBDir      string `json:"-"`
-	NativeDir  string `json:"-"`
-	AVIF       bool   `json:"avif"`
-	Restricted bool   `json:"-"`
+	DatabaseBackend string `json:"-"`
+	MySQLDSN        string `json:"-"`
+	MySQLCAFile     string `json:"-"`
+	Root            string `json:"-"`
+	Listen          string `json:"listen"`
+	DataDir         string `json:"-"`
+	PublicDir       string `json:"-"`
+	PrivateDir      string `json:"-"`
+	DBDir           string `json:"-"`
+	NativeDir       string `json:"-"`
+	AVIF            bool   `json:"avif"`
+	Restricted      bool   `json:"-"`
 }
 
 // Expose only confirmed phase-A fields; phase-B defaults are enforced without configuration fields.
@@ -68,6 +72,7 @@ type Manager struct {
 	path       string
 	deployment Deployment
 	current    atomic.Pointer[Snapshot]
+	storage    Storage
 	watcher    *fsnotify.Watcher
 	mu         sync.Mutex
 }
@@ -80,7 +85,17 @@ func Defaults() Runtime {
 		ConversionConcurrency: 10, Scheduling: "round_robin", Priority: "new_first", ResumeTasks: true, OriginalFallback: true, AutomaticRetry: true,
 		PublicCDNSeconds: 15 * 24 * 3600, PublicBrowserSeconds: 3 * 24 * 3600, FallbackCDNSeconds: 3600, PrivateKeyDefaultMS: 1_800_000}
 }
-func LoadDeployment(root string) (Deployment, error) {
+func LoadDeployment(root string) (Deployment, error) { return loadDeployment(root, true) }
+
+// Offline migration reads each root independently; inherited deployment variables must not mix targets.
+func LoadDeploymentFile(root string) (Deployment, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return Deployment{}, err
+	}
+	return loadDeployment(canonical, false)
+}
+func loadDeployment(root string, inherit bool) (Deployment, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return Deployment{}, err
@@ -89,6 +104,12 @@ func LoadDeployment(root string) (Deployment, error) {
 	path := filepath.Join(abs, ".env")
 	if _, err = os.Stat(path); err == nil {
 		env, err = godotenv.Read(path)
+		if err == nil && env["PEBRIL_MYSQL_DSN"] != "" {
+			info, e := os.Stat(path)
+			if e != nil || info.Mode().Perm()&0077 != 0 {
+				return Deployment{}, errors.New("Database credential file must be private to the service user")
+			}
+		}
 		if err != nil {
 			return Deployment{}, fmt.Errorf(".env: %w", err)
 		}
@@ -96,7 +117,7 @@ func LoadDeployment(root string) (Deployment, error) {
 		return Deployment{}, err
 	}
 	value := func(key, fallback string) string {
-		if v, ok := os.LookupEnv(key); ok {
+		if v, ok := os.LookupEnv(key); inherit && ok {
 			return v
 		}
 		if v, ok := env[key]; ok {
@@ -110,7 +131,16 @@ func LoadDeployment(root string) (Deployment, error) {
 		}
 		return filepath.Join(abs, p)
 	}
-	d := Deployment{Root: abs, Listen: value("PEBRIL_LISTEN", "127.0.0.1:8080"), DataDir: resolve(value("PEBRIL_DATA_DIR", "data")), NativeDir: resolve(value("PEBRIL_NATIVE_DIR", "bin"))}
+	d := Deployment{DatabaseBackend: value("PEBRIL_DATABASE_BACKEND", "sqlite"), MySQLDSN: value("PEBRIL_MYSQL_DSN", ""), Root: abs, Listen: value("PEBRIL_LISTEN", "127.0.0.1:8080"), DataDir: resolve(value("PEBRIL_DATA_DIR", "data")), NativeDir: resolve(value("PEBRIL_NATIVE_DIR", "bin"))}
+	if d.DatabaseBackend != "sqlite" && d.DatabaseBackend != "mysql" {
+		return d, errors.New("PEBRIL_DATABASE_BACKEND must be sqlite or mysql")
+	}
+	if d.DatabaseBackend == "mysql" && d.MySQLDSN == "" {
+		return d, errors.New("PEBRIL_MYSQL_DSN is required for MySQL")
+	}
+	if ca := value("PEBRIL_MYSQL_CA_FILE", ""); ca != "" {
+		d.MySQLCAFile = resolve(ca)
+	}
 	_, port, err := net.SplitHostPort(d.Listen)
 	if err != nil {
 		return d, fmt.Errorf("PEBRIL_LISTEN: %w", err)
@@ -244,34 +274,50 @@ func duplicateKeys(data []byte) error {
 	return nil
 }
 func Read(path string, d Deployment) (Runtime, error) {
+	r, _, err := readConfiguration(path, d)
+	return r, err
+}
+func readConfiguration(path string, d Deployment) (Runtime, Storage, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return Runtime{}, err
+		return Runtime{}, Storage{}, err
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, 1024*1024+1))
 	if err != nil {
-		return Runtime{}, err
+		return Runtime{}, Storage{}, err
 	}
 	if len(data) > 1024*1024 {
-		return Runtime{}, errors.New("Configuration file exceeds 1MiB")
+		return Runtime{}, Storage{}, errors.New("Configuration file exceeds 1MiB")
 	}
 	if err = duplicateKeys(data); err != nil {
-		return Runtime{}, err
+		return Runtime{}, Storage{}, err
 	}
 	if len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '{' {
-		return Runtime{}, errors.New("Configuration root must be a JSON object")
+		return Runtime{}, Storage{}, errors.New("Configuration root must be a JSON object")
 	}
-	r := Defaults()
+	r := diskConfiguration{Runtime: Defaults(), Storage: Storage{Backend: "local"}}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&r); err != nil {
-		return r, err
+		return Runtime{}, Storage{}, errors.New("Configuration JSON contains an invalid value or unknown field")
 	}
-	if err = r.Validate(d); err != nil {
-		return r, err
+	if err = r.Runtime.Validate(d); err != nil {
+		return Runtime{}, Storage{}, err
 	}
-	return r, nil
+	if r.Storage.Backend == "" {
+		r.Storage.Backend = "local"
+	}
+	if r.Storage.S3 != nil {
+		info, e := f.Stat()
+		if e != nil || info.Mode().Perm()&0077 != 0 {
+			return Runtime{}, Storage{}, errors.New("S3 configuration file must be private to the service user")
+		}
+	}
+	if err = r.Storage.Validate(); err != nil {
+		return Runtime{}, Storage{}, err
+	}
+	return r.Runtime, r.Storage, nil
 }
 func New(d Deployment, create bool) (*Manager, error) {
 	path := filepath.Join(d.Root, "config.json")
@@ -299,11 +345,11 @@ func New(d Deployment, create bool) (*Manager, error) {
 			return nil, e
 		}
 	}
-	r, err := Read(path, d)
+	r, storage, err := readConfiguration(path, d)
 	if err != nil {
 		return nil, fmt.Errorf("config.json: %w", err)
 	}
-	m := &Manager{path: path, deployment: d}
+	m := &Manager{path: path, deployment: d, storage: storage}
 	m.current.Store(&Snapshot{Revision: 1, Policy: r})
 	return m, nil
 }
@@ -325,9 +371,12 @@ func (m *Manager) Snapshot() Snapshot {
 func (m *Manager) Reload() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, e := Read(m.path, m.deployment)
+	r, storage, e := readConfiguration(m.path, m.deployment)
 	if e != nil {
 		return e
+	}
+	if !reflect.DeepEqual(storage, m.storage) {
+		return errors.New("Storage configuration changed; restart is required")
 	}
 	old := m.current.Load()
 	m.current.Store(&Snapshot{Revision: old.Revision + 1, Policy: r})

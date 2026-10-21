@@ -10,8 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kserksi/Pebril/internal/auth"
+	"github.com/kserksi/Pebril/internal/objectstore"
 	"github.com/kserksi/Pebril/internal/store"
 	"github.com/kserksi/Pebril/internal/uploads"
+	"time"
 )
 
 type galleryFile struct {
@@ -42,6 +44,14 @@ func galleryValue(image store.Image, service *uploads.Service) galleryImage {
 }
 
 func galleryError(c *gin.Context, err error) {
+	if errors.Is(err, objectstore.ErrUnavailable) {
+		c.JSON(503, gin.H{"error": "Selected image storage is unavailable"})
+		return
+	}
+	if errors.Is(err, objectstore.ErrIntegrity) {
+		c.JSON(500, gin.H{"error": "Stored image failed integrity verification"})
+		return
+	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows), errors.Is(err, os.ErrNotExist):
 		c.JSON(404, gin.H{"error": "Image not found"})
@@ -107,18 +117,13 @@ func galleryRoutes(router *gin.Engine, authentication *auth.Service, service *up
 		}
 		c.JSON(200, gin.H{"deleted": true})
 	}))
-	router.GET("/api/v1/images/:id/original", requireSession(authentication, false, func(session auth.Session, c *gin.Context) {
-		image, reference, file, err := service.OpenOriginal(c.Param("id"), session.User.ID, session.User.Admin)
+	originalDownload := requireSession(authentication, false, func(session auth.Session, c *gin.Context) {
+		image, reference, file, err := service.OpenOriginal(c.Request.Context(), c.Param("id"), session.User.ID, session.User.Admin)
 		if err != nil {
 			galleryError(c, err)
 			return
 		}
 		defer file.Close()
-		info, err := file.Stat()
-		if err != nil {
-			galleryError(c, err)
-			return
-		}
 		kind := map[string]string{"svg": "image/svg+xml", "png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif", "avif": "image/avif"}[reference.Format]
 		if kind == "" {
 			c.JSON(500, gin.H{"error": "Unsupported stored image format"})
@@ -130,6 +135,12 @@ func galleryRoutes(router *gin.Engine, authentication *auth.Service, service *up
 		c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
 		c.Header("CDN-Cache-Control", "no-store")
 		c.Header("Cloudflare-CDN-Cache-Control", "no-store")
-		http.ServeContent(c.Writer, c.Request, name, info.ModTime(), file)
-	}))
+		modified := time.Time{}
+		if image.Delivered > 0 {
+			modified = time.UnixMilli(image.Delivered)
+		}
+		http.ServeContent(c.Writer, c.Request, name, modified, file)
+	})
+	router.GET("/api/v1/images/:id/original", originalDownload)
+	router.HEAD("/api/v1/images/:id/original", originalDownload)
 }

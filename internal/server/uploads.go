@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/kserksi/Pebril/internal/objectstore"
 	"github.com/kserksi/Pebril/internal/store"
 	"github.com/kserksi/Pebril/internal/uploads"
 )
@@ -83,6 +84,9 @@ func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
 		if uploads.IsCapacity(err) {
 			status = 429
 		}
+		if errors.Is(err, objectstore.ErrUnavailable) {
+			status = 503
+		}
 		if errors.Is(err, store.ErrPermission) {
 			status = 403
 		}
@@ -135,17 +139,18 @@ func uploadHandler(service *uploads.Service, user store.User, c *gin.Context) {
 	}
 }
 func publicImage(service *uploads.Service, cover bool, c *gin.Context) {
-	image, reference, file, err := service.OpenPublic(c.Param("id"), cover)
+	image, reference, file, err := service.OpenPublic(c.Request.Context(), c.Param("id"), cover)
 	if err != nil {
-		c.Status(404)
+		if errors.Is(err, objectstore.ErrUnavailable) {
+			c.Status(503)
+		} else if errors.Is(err, objectstore.ErrIntegrity) {
+			c.Status(500)
+		} else {
+			c.Status(404)
+		}
 		return
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		c.Status(500)
-		return
-	}
 	policy := image.Policy.Policy
 	if image.Temporary {
 		c.Header("Cache-Control", "no-store")
@@ -164,7 +169,11 @@ func publicImage(service *uploads.Service, cover bool, c *gin.Context) {
 	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 	c.Header("Content-Type", kind)
 	c.Header("ETag", `"`+reference.Hash+`"`)
-	http.ServeContent(c.Writer, c.Request, "image", info.ModTime(), file)
+	modified := time.Time{}
+	if !image.Temporary && image.Delivered > 0 {
+		modified = time.UnixMilli(image.Delivered)
+	}
+	http.ServeContent(c.Writer, c.Request, "image", modified, file)
 }
 
 func cacheHeader(browser, cdn int64) string {

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/kserksi/Pebril/internal/auth"
@@ -22,10 +25,12 @@ func resetAdministrator(deploy config.Deployment) error {
 	if os.Geteuid() == 0 || os.Getuid() != os.Geteuid() {
 		return errors.New("Run the reset as the ordinary service user")
 	}
-	if err := existingResetDatabase(deploy.DBDir); err != nil {
-		return err
+	if deploy.DatabaseBackend != "mysql" {
+		if err := existingResetDatabase(deploy.DBDir); err != nil {
+			return err
+		}
 	}
-	database, err := store.Open(deploy.DBDir)
+	database, err := store.OpenExistingDeployment(deploy)
 	if err != nil {
 		return err
 	}
@@ -180,4 +185,22 @@ func readResetPassword(ctx context.Context, fd int) (password []byte, err error)
 			password = append(password, value[0])
 		}
 	}
+}
+
+func recoverDatabase(deploy config.Deployment) error {
+	if os.Getuid() != os.Geteuid() {
+		return errors.New("Run recovery as the ordinary service user")
+	}
+	return store.RecoverDatabase(deploy, func() error {
+		if _, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS); err != nil {
+			return errors.New("Database-owner recovery requires a terminal")
+		}
+		fmt.Fprintln(os.Stderr, "Stop every Pebril instance using this database, including processes on other hosts. Recovery does not stop them for you.")
+		fmt.Fprint(os.Stderr, "Type STOPPED to clear the stale database owner: ")
+		text, err := bufio.NewReader(io.LimitReader(os.Stdin, 128)).ReadString('\n')
+		if err != nil || strings.TrimSpace(text) != "STOPPED" {
+			return errors.New("Database-owner recovery cancelled")
+		}
+		return nil
+	})
 }

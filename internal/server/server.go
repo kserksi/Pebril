@@ -38,14 +38,14 @@ func HandlerWithUploads(version string, manager *config.Manager, database *store
 		c.Next()
 	})
 	router.GET("/healthz", func(c *gin.Context) {
-		if !capability.Ready || database.Ping() != nil {
+		if !capability.Ready || database.Ping() != nil || (upload == nil && manager.Storage().Backend == "s3" || upload != nil && upload.StorageReady(c.Request.Context()) != nil) {
 			c.JSON(503, gin.H{"ready": false})
 			return
 		}
 		c.JSON(200, gin.H{"ready": true})
 	})
 	router.GET("/api/v1/status", func(c *gin.Context) {
-		c.JSON(200, gin.H{"name": "Pebril", "version": version, "stage": "conversion", "config_revision": manager.Snapshot().Revision, "sqlite": database.Ping() == nil, "native": gin.H{"ready": capability.Ready, "libvips_version": capability.VipsVersion, "svg": capability.SVG, "gif": capability.GIF, "avif_enabled": capability.AVIF}})
+		c.JSON(200, gin.H{"name": "Pebril", "version": version, "stage": "conversion", "config_revision": manager.Snapshot().Revision, "sqlite": database.Backend() == "sqlite" && database.Ping() == nil, "database": gin.H{"backend": database.Backend(), "ready": database.Ping() == nil}, "storage": gin.H{"backend": manager.Storage().Backend, "ready": upload == nil && manager.Storage().Backend == "local" || upload != nil && upload.StorageReady(c.Request.Context()) == nil}, "native": gin.H{"ready": capability.Ready, "libvips_version": capability.VipsVersion, "svg": capability.SVG, "gif": capability.GIF, "avif_enabled": capability.AVIF}})
 	})
 	accountRoutes(router, authentication, upload)
 	files, _ := fs.Sub(assets, "web")
