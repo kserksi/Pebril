@@ -30,11 +30,12 @@ Conversion, public result links, and basic gallery management are available. Pri
 
 ## What is available today?
 
-The current development version is **0.0.9-dev**, with ordinary account registration/administration and a basic gallery. Published prereleases and downloads are listed on the [Releases page](https://github.com/kserksi/Pebril/releases).
+The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. R2 is the selected real-service test target; validation is deferred because Cloudflare sign-in is currently unavailable. AWS S3 has not been verified. This version is published to `dev` without a GitHub Release; earlier downloads remain on the [Releases page](https://github.com/kserksi/Pebril/releases).
 
 | Capability | Current status |
 |---|---|
 | Configuration, JSON hot reload, SQLite, and readiness checks | Available |
+| MySQL 8.4 and generic S3-compatible storage | Implemented; real-service S3 acceptance pending |
 | Administrator initialization, login/logout, and upload-only tokens | Available |
 | Image reception, content validation, quota checks, and safe storage | Available |
 | Static conversion | PNG, JPEG, WebP, and deployment-enabled AVIF output |
@@ -54,7 +55,7 @@ Official system-package installation and recovery validation remain pending.
 
 ## Where is the project heading?
 
-The first complete version is intended to connect multi-user image management, modern-format processing, and public/private sharing. Linux binaries with local storage come first. Docker, S3-compatible storage, Cloudflare Workers, and optional Windows support remain later directions. See the Roadmap for progress; unfinished work has no new estimated completion dates.
+The first complete version is intended to connect multi-user image management, modern-format processing, and public/private sharing. Linux binaries support SQLite/local storage and the new MySQL/S3-compatible adapters. Docker, Cloudflare Workers, and optional Windows support remain later directions. See the Roadmap for progress; unfinished work has no new estimated completion dates.
 
 Development versions use `x.y.z-dev`. The first stable release will be `1.0.0`.
 
@@ -93,9 +94,13 @@ Upload-only tokens use `POST /api/v1/uploads` with a multipart `file` field and 
 
 Deploy external access behind HTTPS. Web sessions use protected cookies; web writes require same-origin requests and CSRF protection. Never put credentials in URLs.
 
-Paths resolve relative to the executable. Copy `.env.example` to `.env` for deployment settings, which require restart. Missing runtime configuration generates `config.json`; valid JSON changes apply automatically, and invalid changes retain the last valid configuration. Data uses `data/`, and native libraries use `bin/`.
+Paths resolve relative to the executable. Copy `.env.example` to `.env` for deployment settings, which require restart. Missing runtime configuration generates `config.json`; valid processing-policy changes apply automatically, and invalid changes retain the last valid configuration. Optional S3 connection/backend changes in that file require restart; mixed storage/policy changes are rejected atomically. Data uses `data/`, and native libraries use `bin/`.
 
 For upgrades, stop the service, back up configuration and data, and deploy into a new directory while preserving configured data paths. Do not replace live configuration with examples.
+
+Database settings belong in `.env`: select MySQL with `PEBRIL_DATABASE_BACKEND=mysql` and supply a private `PEBRIL_MYSQL_DSN`. Optional S3 settings belong in `config.json`; merge `config.s3.example.json` into existing processing settings and supply your HTTPS endpoint, bucket, signing region, addressing style, exclusive prefix and keys. Keep credential-bearing files private to the service user. Images continue through Pebril URLs, with any CDN in front.
+
+Changing configuration does not migrate data. For stopped, backed-up SQLite/local deployments, use `./pebril.sh migrate --source-root PATH --target-root PATH` with separate prepared source and target directories. Verify the target before switching traffic and retain the original matching binary/configuration/data backup for rollback. An unexpected MySQL connection loss requires stopping every old instance before offline `recover-database`.
 
 ## Resource controls
 
@@ -105,7 +110,7 @@ Shared pages may be counted repeatedly, causing earlier degradation. Filesystems
 
 ## Build and checks
 
-With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days. For new development versions, successful `dev` pushes also publish prereleases; pull requests and `main` do not publish Releases.
+With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days. Automatic prerelease publication is paused. Pushes to `dev`, pull requests and `main` do not create Releases while it remains paused.
 
 For each release, synchronize this README's version, release/download links, available capabilities, and remaining scope before building and pushing. Verify the packaged README matches the approved source, then check the live README and release links after publication. Do not claim an unpublished version is available. Published tags and assets remain unchanged when correcting documentation.
 
