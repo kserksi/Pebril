@@ -25,7 +25,7 @@ case "$1" in
  host) exit 0 ;;
  install)
   printf '%s\n' "$2" >> "$native/attempts"
-  [[ ${MOCK_FAIL_ALL:-} != yes && "$2" == pebril ]] || exit 1
+  [[ ${MOCK_FAIL_ALL:-} != yes && "$2" == upstream ]] || exit 1
   /bin/sleep 0.15
   touch "$native/ready"
   printf '%s\n' "$native/ready" ;;
@@ -119,14 +119,14 @@ esac
             assert not (native / 'sudo-called').exists(), 'Rejected package reached sudo'
             if '--allow-downloads' in grants:
                 assert result.returncode == 0, result.stderr
-                assert (native / 'attempts').read_text().splitlines() == ['upstream', 'pebril']
+                assert (native / 'attempts').read_text().splitlines() == ['upstream']
                 (native / 'attempts').unlink()
                 (native / 'ready').unlink()
             else:
                 assert result.returncode != 0 and 'not authorized' in result.stderr, result.stderr
                 assert not (native / 'attempts').exists(), 'System grant authorized a private download'
             assert not (app / 'service-called').exists(), 'Rejected candidate started the service'
-    print('System-candidate rejection passed: 12 OS/metadata cases, sudo never reached, fallback needs a separate grant (metadata/helper doubles).')
+    print('System-candidate rejection passed: 12 OS/metadata cases, sudo never reached, private download needs a separate grant (metadata/helper doubles).')
 
 
 
@@ -315,7 +315,7 @@ def main():
             assert not (native / 'attempts').exists(), 'No download without explicit consent'
         result = run('--allow-downloads')
         assert result.returncode == 0, result.stderr
-        assert (native / 'attempts').read_text().splitlines() == ['upstream', 'pebril']
+        assert (native / 'attempts').read_text().splitlines() == ['upstream']
         assert not (app / 'service-called').exists(), 'Check must be independent of service execution'
         (native / 'attempts').unlink()
         assert run().returncode == 0
@@ -370,7 +370,7 @@ def main():
         for process in processes:
             stdout, stderr = process.communicate(timeout=10)
             assert process.returncode == 0, stderr.decode()
-        assert (native / 'attempts').read_text().splitlines() == ['upstream', 'pebril']
+        assert (native / 'attempts').read_text().splitlines() == ['upstream']
         (native / 'attempts').unlink()
         (native / 'ready').unlink()
 
@@ -398,7 +398,7 @@ def main():
         assert result.returncode != 0 and 'symbolic link' in result.stderr
         assert not (app / 'unrelated').exists()
     restricted_preflight_contract(env)
-    print('Bootstrap contract passed: no implicit consent, terminal yes/no, ordered fallback, independent check, concurrent repair, cancellation and lock safety (helper doubles).')
+    print('Bootstrap contract passed: no implicit consent, terminal yes/no, reviewed-source selection, independent check, concurrent repair, cancellation and lock safety (helper doubles).')
 
 
 if __name__ == '__main__':

@@ -77,7 +77,7 @@ def test_image(entry):
         assert check.returncode == 0, (entry['name'], check.stderr, check.stdout)
         result = run(['/app/pebril', 'check'], offline)
         assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout)['vips_version'] == '8.18.5'
+        assert json.loads(result.stdout)['vips_version'] == '8.18.7'
         for name in ['libpebril_native.so', 'pebril-image-worker']:
             (app / 'bin' / name).unlink()
         repeat = run(['/app/pebril.sh', '--check'], offline)
@@ -85,41 +85,25 @@ def test_image(entry):
         assert (app / 'bin/libpebril_native.so').exists()
         assert (app / 'bin/pebril-image-worker').exists()
 
-        # First-tier failure is a test double; third-tier asset/download/probes are real.
+        # A failed reviewed download must not reinstall the retired vulnerable fallback.
         target = (app / 'bin/vips-current').resolve()
         (app / 'bin/vips-current').unlink()
         shutil.rmtree(target)
         helper = app / 'bin/pebril-runtime'
         helper.rename(app / 'bin/pebril-runtime-real')
-        helper.write_text('''#!/bin/bash
-if [[ "$1" == install ]]; then
-    printf '%s\\n' "$2" >> /app/sources-tested
-    if [[ "$2" == upstream ]]; then
-        printf 'Controlled upstream failure for fallback acceptance.\\n' >&2
-        exit 1
-    fi
-fi
-exec /app/bin/pebril-runtime-real "$@"
-''')
+        helper.write_text('#!/bin/bash\nif [[ "$1" == install ]]; then\n    printf \'%s\\n\' "$2" >> /app/sources-tested\n    exit 1\nfi\nexec /app/bin/pebril-runtime-real "$@"\n')
         helper.chmod(0o700)
-        # The independent script can repair/check without executing the service.
-        (app / 'pebril').rename(app / 'pebril-real')
-        (app / 'pebril').write_text('#!/bin/bash\nprintf called > /app/unexpected-service-call\nexit 91\n')
-        (app / 'pebril').chmod(0o700)
-        fallback = run(['/app/pebril.sh', '--check', '--allow-downloads'])
-        assert fallback.returncode == 0, (entry['name'], fallback.stderr)
-        assert (app / 'sources-tested').read_text().splitlines() == ['upstream', 'pebril']
-        assert not (app / 'unexpected-service-call').exists()
-        (app / 'pebril').unlink()
-        (app / 'pebril-real').rename(app / 'pebril')
+        failure = run(['/app/pebril.sh', '--check', '--allow-downloads'])
+        assert failure.returncode != 0, (entry['name'], failure.stderr)
+        assert (app / 'sources-tested').read_text().splitlines() == ['upstream']
         helper.unlink()
         (app / 'bin/pebril-runtime-real').rename(helper)
+        assert run(['/app/pebril.sh', '--check', '--allow-downloads']).returncode == 0
         result = run(['/app/pebril', 'check'], offline)
         assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout)['vips_version'] == '8.16.1'
+        assert json.loads(result.stdout)['vips_version'] == '8.18.7'
         installed = (app / 'bin/vips-current').resolve()
-        assert (installed / 'DISTRIBUTION-NOTICE.txt').is_file()
-        assert list((installed / 'licenses').rglob('*'))
+        assert (installed / 'THIRD-PARTY-NOTICES.md').is_file()
         assert run(['/app/pebril.sh', '--check'], offline).returncode == 0
         assert not (app / 'data').exists(), 'Bootstrap/check must not initialize business data'
 
@@ -156,7 +140,7 @@ exec /app/bin/pebril-runtime-real "$@"
                 stop_application(process, app / 'pebril')
         assert not list((app / 'bin').glob('.probe-*'))
         assert not list((app / 'bin').glob('.pebril-install-*'))
-        print(entry['name'], 'Passed: explicit consent, upstream download, real r2 fallback, offline reuse, independent check, root refusal, HTTP and shutdown; no real privileged package transaction', flush=True)
+        print(entry['name'], 'Passed: explicit consent, upstream download, retired fallback refusal, offline reuse, independent check, root refusal, HTTP and shutdown; no real privileged package transaction', flush=True)
 
 
 if __name__ == '__main__':

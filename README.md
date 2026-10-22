@@ -30,7 +30,7 @@ Conversion, public result links, and basic gallery management are available. Pri
 
 ## What is available today?
 
-The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. R2 is the selected real-service test target; validation is deferred because Cloudflare sign-in is currently unavailable. AWS S3 has not been verified. This version is published to `dev` without a GitHub Release; earlier downloads remain on the [Releases page](https://github.com/kserksi/Pebril/releases).
+The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. R2 is the selected real-service test target; validation is deferred because Cloudflare sign-in is currently unavailable. AWS S3 has not been verified. The current `dev` source includes the security update for this version: Go 1.26.10, patched Go dependencies, and a pinned native runtime with reviewed advisory dispositions. Earlier builds carrying the same version do not include this update; use the current `dev` commit and its matching checked build. There is no GitHub Release for this version; earlier downloads remain on the [Releases page](https://github.com/kserksi/Pebril/releases).
 
 | Capability | Current status |
 |---|---|
@@ -72,7 +72,7 @@ cd pebril-*-linux-amd64-*
 ./pebril.sh
 ```
 
-Run as an ordinary user. Root service startup is refused. The launcher reuses compatible installed libraries and asks before downloading missing runtimes. It tries a verified upstream package, then the Pebril-maintained fallback if needed. Failure stops startup.
+Run as an ordinary user. Root service startup is refused. The launcher accepts only the security-reviewed native library bytes and asks before downloading the pinned upstream runtime. Older fallback packages and unreviewed system or local libraries are rejected. Failure stops startup.
 
 Noninteractive setup requires an explicit download grant for that invocation:
 

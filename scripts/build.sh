@@ -45,6 +45,13 @@ for binary in binaries:
     if maximum>(2,34):raise SystemExit(f"{binary} requires glibc {maximum}, exceeding the minimum target 2.34")
 identity={"version":Path("VERSION").read_text().strip(),"source_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"source_dirty":bool(subprocess.check_output(["git","status","--porcelain","--untracked-files=normal"],text=True).strip()),"target":"linux-x64-glibc","bootstrap":"pebril.sh"}
 identity["native_build"]={"pkg_config_version":subprocess.check_output(["pkg-config","--modversion","vips"],text=True).strip(),"startup_catalog":"third-party/native/native-manifest.json"}
+for binary in [output/"pebril",output/"bin/pebril-image-worker",output/"bin/pebril-runtime"]:
+    build_info=subprocess.check_output(["go","version","-m",str(binary)],text=True)
+    version=build_info.splitlines()[0].split()[-1]
+    match=re.fullmatch(r"go(\d+)\.(\d+)\.(\d+)",version)
+    if not match or (tuple(map(int,match.groups()))<(1,26,10) or (tuple(map(int,match.groups()))[:2]==(1,27) and int(match.group(3))<3)):
+        raise SystemExit(f"{binary.name} requires a security-patched Go toolchain >=1.26.10; found {version}")
+identity["go_toolchain"]=version
 (output/"build.json").write_text(json.dumps(identity,indent=2)+"\n")
 files=binaries+[output/name for name in ["pebril.sh","VERSION","build.json",".env.example","config.example.json","config.s3.example.json","LICENSE"]]
 files.extend(p for p in (output/"third-party").rglob("*") if p.is_file())

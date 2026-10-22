@@ -96,7 +96,7 @@ def main():
         inventory.append(dict(ecosystem='rust', name=package['name'], version=package['version'], license=package['license'], checksum_in='native/Cargo.lock'))
     goroot = Path(subprocess.check_output(['go', 'env', 'GOROOT']).decode().strip())
     licenses(goroot, target / 'go-standard-library')
-    payload = dict(scope='Actual main/worker/deployment-helper Go runtime modules and Rust lockfile packages; native/native-manifest.json describes the separate startup download catalog, not the link-time build input.', review='Pinned declarations and original texts collected; see native/dependency-licenses.json for the quick-error exception and build.json native_build and native-build-NOTICES.txt for the CI build input; native/native-manifest.json is the separate installer catalog. Full product release review remains separate.', packages=inventory)
+    payload = dict(scope='Actual main/worker/deployment-helper Go runtime modules and Rust lockfile packages; native/native-manifest.json describes the shared reviewed link-time build input and startup download catalog.', review='Pinned declarations and original texts collected; see native/dependency-licenses.json for the quick-error exception and build.json native_build and native-build-NOTICES.txt for the CI build input; native/native-manifest.json is the shared build/installer catalog. Full product release review remains separate.', packages=inventory)
     native_target = target / 'native'
     native_target.mkdir(exist_ok=True)
     for file in (ROOT / 'third-party').rglob('*'):

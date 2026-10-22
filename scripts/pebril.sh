@@ -17,7 +17,7 @@ Usage: pebril.sh [--check] [--allow-system-install] [--allow-downloads] [--allow
 Run as the ordinary service user. Deployment checks and dependency repair run
 before the service. --check (or check) validates without starting the service.
 --allow-system-install authorizes this invocation's eligible system transaction.
---allow-downloads authorizes this invocation's pinned upstream -> Pebril fallback.
+--allow-downloads authorizes this invocation's pinned, security-reviewed upstream runtime.
 --allow-low-memory authorizes restricted serving when the memory allowance is below
 40% of system RAM: concurrency 1, AVIF conversion disabled. Check never serves.
 Without these options, interactive use asks before each kind of installation;
@@ -273,11 +273,11 @@ else
     note 'No eligible reviewed system package is available from the current repository metadata.'
 fi
 
-if ! $allow_downloads && ! ask 'Download and privately install a pinned runtime (upstream, then Pebril if needed)?'; then
+if ! $allow_downloads && ! ask 'Download and privately install the security-reviewed upstream runtime?'; then
     fail 'Private downloads were not authorized. Re-run interactively or use --allow-downloads for this invocation.'
 fi
 run_helper host || fail 'This host does not satisfy the pinned runtime prerequisites.'
-for source in upstream pebril; do
+for source in upstream; do
     note "Trying pinned $source runtime."
     if run_helper install "$source" "$native" "$avif"; then finish "$selected"; fi
     note "The $source runtime could not be installed and verified."

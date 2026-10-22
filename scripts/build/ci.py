@@ -18,8 +18,8 @@ PAYLOAD = ['pebril', 'bin/pebril-image-worker', 'bin/pebril-runtime', 'bin/libpe
 
 
 def prepare(root):
-    manifest = json.loads((root / 'third-party/libvips/8.16.1/linux-x64-glibc-r2/manifest.json').read_text())
-    upstream = manifest['upstream']
+    manifest = json.loads((root / 'third-party/native-manifest.json').read_text())
+    upstream = {'url': manifest['archive_url'], 'bytes': manifest['archive_bytes'], 'archive_sha256': manifest['archive_sha256']}
     native = root / '.build/ci/native'
     if native.exists():
         raise RuntimeError('Use a fresh .build/ci/native directory')
@@ -38,7 +38,7 @@ def prepare(root):
     finally:
         archive.unlink()
     library = native / 'lib/libvips.so.42'
-    if hashlib.sha256(library.read_bytes()).hexdigest() != manifest['libraries']['lib/libvips.so.42']['sha256']:
+    if hashlib.sha256(library.read_bytes()).hexdigest() != manifest['library_sha256']:
         raise RuntimeError('Native build library checksum mismatch')
     (native / 'lib/libvips.so').symlink_to('libvips.so.42')
     pkgconfig = native / 'lib/pkgconfig'
@@ -46,7 +46,7 @@ def prepare(root):
     (pkgconfig / 'vips.pc').write_text(f"""prefix={native}
 Name: vips
 Description: Reviewed native build input
-Version: 8.16.1
+Version: {next(c['version'] for c in manifest['components'] if c['name'] == 'vips')}
 Libs: -L${{prefix}}/lib -lvips
 Cflags: -I${{prefix}}/include -I${{prefix}}/include/glib-2.0 -I${{prefix}}/lib/glib-2.0/include
 """)
@@ -61,11 +61,13 @@ def package(root):
     identity = json.loads((output / 'build.json').read_text())
     if identity['version'] != version or not re.fullmatch(r'[0-9a-f]{40}', identity['source_commit']):
         raise RuntimeError('Package identity does not match VERSION/source')
-    expected_native = json.loads((root / 'third-party/libvips/8.16.1/linux-x64-glibc-r2/manifest.json').read_text())
+    expected_native = json.loads((root / 'third-party/native-manifest.json').read_text())
     actual_native = json.loads((native / 'versions.json').read_text())
-    if (identity.get('native_build', {}).get('pkg_config_version') != expected_native['version']
-            or actual_native.get('vips') != expected_native['version']):
-        raise RuntimeError('CI native build provenance mismatch; the startup catalog is a separate scope')
+    expected_version = next(c['version'] for c in expected_native['components'] if c['name'] == 'vips')
+    if (identity.get('native_build', {}).get('pkg_config_version') != expected_version
+            or actual_native.get('vips') != expected_version
+            or hashlib.sha256((native / 'lib/libvips.so.42').read_bytes()).hexdigest() != expected_native['library_sha256']):
+        raise RuntimeError('CI native build provenance mismatch; build/runtime library must match the reviewed artifact')
     shutil.copy2(root / 'README.md', output / 'README.md')
     shutil.copy2(native / 'THIRD-PARTY-NOTICES.md', output / 'third-party/native-build-NOTICES.txt')
     files = sorted(PAYLOAD + [str(p.relative_to(output)) for p in (output / 'third-party').rglob('*') if p.is_file()])

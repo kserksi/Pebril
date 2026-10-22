@@ -42,6 +42,21 @@ func digest(filename string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// Reviewed rejects unreviewed dependency closures, including otherwise ABI-compatible system libraries.
+func Reviewed(library string) error {
+	sum, err := digest(library)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range Catalog() {
+		if sum == artifact.LibrarySHA256 {
+			return nil
+		}
+	}
+	return errors.New("Native library is not a security-reviewed artifact; run pebril.sh to install the pinned runtime")
+}
+
 func Active(dir string, artifact Artifact) (string, error) {
 	target, e := os.Readlink(filepath.Join(dir, currentName))
 	if e != nil {

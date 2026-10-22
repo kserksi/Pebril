@@ -22,17 +22,21 @@ def main():
             path = output / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(name)
-        identity={'version':'0.0.5-dev','source_commit':'a'*40,'native_build':{'pkg_config_version':'8.16.1'}}
+        identity={'version':'0.0.5-dev','source_commit':'a'*40,'native_build':{'pkg_config_version':'8.18.7'}}
         (output / 'build.json').write_text(json.dumps(identity))
         (root / 'VERSION').write_text('0.0.5-dev\n')
         (root / 'README.md').write_text('Public readme')
         notice = root / '.build/ci/native/THIRD-PARTY-NOTICES.md'
         notice.parent.mkdir(parents=True)
         notice.write_text('Original third-party notice')
-        (notice.parent / 'versions.json').write_text(json.dumps({'vips':'8.16.1'}))
-        manifest=root/'third-party/libvips/8.16.1/linux-x64-glibc-r2/manifest.json'
+        (notice.parent / 'versions.json').write_text(json.dumps({'vips':'8.18.7'}))
+        manifest=root/'third-party/native-manifest.json'
         manifest.parent.mkdir(parents=True)
-        manifest.write_text(json.dumps({'version':'8.16.1'}))
+        library=notice.parent/'lib/libvips.so.42'
+        library.parent.mkdir()
+        library.write_bytes(b'reviewed-native')
+        manifest.write_text(json.dumps({'components':[{'name':'vips','version':'8.18.7'}],
+                                        'library_sha256':hashlib.sha256(library.read_bytes()).hexdigest()}))
         identity['native_build']['pkg_config_version']='8.18.5'
         (output/'build.json').write_text(json.dumps(identity))
         try:
@@ -41,7 +45,7 @@ def main():
             assert 'provenance mismatch' in str(error)
         else:
             raise AssertionError('Mismatched CI build headers were accepted')
-        identity['native_build']['pkg_config_version']='8.16.1'
+        identity['native_build']['pkg_config_version']='8.18.7'
         (output/'build.json').write_text(json.dumps(identity))
 
         (output / 'third-party').mkdir()

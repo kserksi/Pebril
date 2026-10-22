@@ -504,6 +504,42 @@
       "name": "github.com/aws/smithy-go",
       "version": "v1.28.5",
       "license": "Apache-2.0"
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/quic-go/quic-go",
+      "version": "v0.59.1",
+      "license": "MIT"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/crypto",
+      "version": "v0.57.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/sys",
+      "version": "v0.48.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/image",
+      "version": "v0.45.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/net",
+      "version": "v0.60.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "ecosystem": "go",
+      "name": "golang.org/x/text",
+      "version": "v0.42.0",
+      "license": "BSD-3-Clause"
     }
   ],
   "maintenance_exceptions": [

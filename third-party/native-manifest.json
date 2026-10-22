@@ -1,12 +1,11 @@
 {
-  "scope": "Startup installer catalog for the separately downloaded upstream libvips runtime; not the worker link-time build input.",
-  "review_date": "2026-10-14",
+  "scope": "Security-reviewed build input and startup installer catalog for the pinned upstream libvips runtime.",
+  "review_date": "2026-10-22",
   "upstream": "https://github.com/kleisauke/libvips-packaging",
-  "tag": "v8.18.5",
-  "upstream_last_push": "2026-10-14T07:35:37Z",
-  "archive_url": "https://github.com/kleisauke/libvips-packaging/releases/download/v8.18.5/libvips-8.18.5-linux-x64.tar.gz",
-  "archive_sha256": "2fc01c30f500db10e85510b77758d412b423ac5d7c9271d2d3539df7d8d074ee",
-  "library_sha256": "2a3b36b1f3e742f204510dc366b183f56723580cb8b490911840c7b1d1f518a1",
+  "tag": "v8.18.7",
+  "archive_url": "https://github.com/kleisauke/libvips-packaging/releases/download/v8.18.7/libvips-8.18.7-linux-x64.tar.gz",
+  "archive_sha256": "e10ffbd665b97fa76575cebe96af440d4d033d0295c4c00a0e27dd841996ef50",
+  "library_sha256": "e42572c0021460ae6667ea5b67f1b1b8094575e8cccc7b317fa39dd6f828535f",
   "elf_requirements": {
     "glibc": "2.28",
     "glibcxx": "3.4.22",
@@ -18,7 +17,7 @@
       "popcnt"
     ]
   },
-  "source_recipe": "https://github.com/kleisauke/libvips-packaging/blob/v8.18.5/build/posix.sh",
+  "source_recipe": "https://github.com/kleisauke/libvips-packaging/blob/v8.18.7/build/posix.sh",
   "linux_exclusions": [
     "proxy-libintl (built only for musl/macOS)",
     "x265",
@@ -27,7 +26,7 @@
   "components": [
     {
       "name": "aom",
-      "version": "3.14.1",
+      "version": "3.15.1",
       "declared_spdx": "BSD-2-Clause AND LicenseRef-AOM-Patent"
     },
     {
@@ -37,12 +36,14 @@
     },
     {
       "name": "cairo",
-      "version": "1.18.4",
-      "declared_spdx": "MPL-2.0"
+      "version": "1.18.6",
+      "declared_spdx": "MPL-1.1",
+      "selected_spdx": "MPL-2.0",
+      "license_election": "MPL-1.1 section 6.2 permits a later version; original bundled notice is preserved."
     },
     {
       "name": "cgif",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "declared_spdx": "MIT"
     },
     {
@@ -52,12 +53,12 @@
     },
     {
       "name": "expat",
-      "version": "2.8.2",
+      "version": "2.8.5",
       "declared_spdx": "MIT"
     },
     {
       "name": "ffi",
-      "version": "3.7.1",
+      "version": "3.8.0",
       "declared_spdx": "MIT"
     },
     {
@@ -72,22 +73,22 @@
     },
     {
       "name": "fribidi",
-      "version": "1.0.16",
+      "version": "1.0.17",
       "declared_spdx": "LGPL-3.0-only"
     },
     {
       "name": "glib",
-      "version": "2.89.3",
+      "version": "2.90.0",
       "declared_spdx": "LGPL-3.0-only"
     },
     {
       "name": "harfbuzz",
-      "version": "14.3.0",
+      "version": "14.5.0",
       "declared_spdx": "MIT"
     },
     {
       "name": "heif",
-      "version": "1.23.1",
+      "version": "1.23.5",
       "declared_spdx": "LGPL-3.0-only"
     },
     {
@@ -127,7 +128,7 @@
     },
     {
       "name": "rsvg",
-      "version": "2.62.90",
+      "version": "2.63.2",
       "declared_spdx": "LGPL-3.0-only"
     },
     {
@@ -137,12 +138,12 @@
     },
     {
       "name": "uhdr",
-      "version": "1.5.1",
+      "version": "2.0.2",
       "declared_spdx": "MIT"
     },
     {
       "name": "vips",
-      "version": "8.18.5",
+      "version": "8.18.7",
       "declared_spdx": "LGPL-3.0-only"
     },
     {
@@ -152,7 +153,7 @@
     },
     {
       "name": "xml2",
-      "version": "2.15.3",
+      "version": "2.15.4",
       "declared_spdx": "MIT"
     },
     {
@@ -164,9 +165,14 @@
   "embedded_in_vips": [
     {
       "name": "libnsgif",
-      "version": "Bundled with libvips 8.18.5 source",
+      "version": "Bundled with libvips 8.18.7 source",
       "declared_spdx": "MIT"
     }
   ],
-  "review_scope": "Fixed asset SHA256, upstream build options, ELF requirements, and upstream component license declarations reviewed. Pebril does not redistribute this libvips binary; startup downloads it from the pinned upstream. Full product release acceptance remains pending."
+  "review_scope": "Pinned archive/library hashes, matching headers, ELF and license declarations reviewed. Cited libheif criticals fixed in 1.23.5; additional 1.23.6 high findings excluded by disabled uncompressed/OpenJPEG/SharpYUV paths in this exact bundle. Unknown system/local libraries and the old fallback are rejected. Not an exhaustive native security certification.",
+  "archive_bytes": 10010090,
+  "build_options": {
+    "libheif": "Static; AOM; plugin loading/examples/libde265/x265 disabled; uncompressed/OpenJPEG/FFmpeg defaults OFF; SharpYUV absent when libheif is built before WebP in isolated target.",
+    "libxml2": "minimum=true"
+  }
 }

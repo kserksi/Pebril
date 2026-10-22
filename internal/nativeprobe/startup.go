@@ -103,6 +103,9 @@ func Check(ctx context.Context, executable, dir, library string, avif bool) (Res
 	if !atLeast(result.VipsVersion, "8.16.1") {
 		return result, errors.New("Compatible libvips >=8.16.1 is required")
 	}
+	if err := nativeinstall.Reviewed(loaded); err != nil {
+		return result, err
+	}
 	_, version, err := imageproc.Prepare(ctx, dir, loaded)
 	if err != nil {
 		return result, err

@@ -318,18 +318,30 @@ func TestLicenseSubtreeRejectsSymlinks(t *testing.T) {
 	}
 }
 
-func TestPebrilCatalogRetainsSourceAndLicenseMaterials(t *testing.T) {
-	prefix := PebrilVips.ID + "/"
-	for _, member := range []string{"DISTRIBUTION-NOTICE.txt", "PACKAGING-LICENSE.txt", "runtime-manifest.json", "README.txt", "versions.json", "THIRD-PARTY-NOTICES.md", "files.sha256", "licenses/MPL-2.0.txt"} {
-		if PebrilVips.Members[prefix+member] != member {
-			t.Fatal("Required source/notice material is missing", member)
+func TestRetiredRuntimeIsUnavailable(t *testing.T) {
+	for _, name := range []string{"pebril", "https://example.com/arbitrary"} {
+		if _, ok := Source(name); ok {
+			t.Fatal("Unreviewed source accepted", name)
 		}
 	}
-	if PebrilVips.LibrarySHA256 != "65e2e1b0eeec6fd120eb9a3fcdf71c7cbe45742c3fb2de050fc73f864ee84e81" {
-		t.Fatal("Unreviewed r2 library")
+}
+
+func TestReviewedChecksActualLibraryBytes(t *testing.T) {
+	library := filepath.Join(t.TempDir(), "libvips.so.42")
+	if err := os.WriteFile(library, []byte("reviewed-fixture"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := Source("https://example.com/arbitrary"); ok {
-		t.Fatal("Arbitrary source accepted")
+	previous := Vips
+	defer func() { Vips = previous }()
+	Vips.LibrarySHA256 = sum([]byte("reviewed-fixture"))
+	if err := Reviewed(library); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(library, []byte("replaced-library"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reviewed(library); err == nil {
+		t.Fatal("Modified library accepted")
 	}
 }
 

@@ -48,7 +48,7 @@ def raster_fixtures(library, directory):
             vips.vips_image_set_int(image, b'loop', 0)
             delay = (ctypes.c_int * 2)(50, 50)
             vips.vips_image_set_array_int(image, b'delay', delay, 2)
-        for extension in (('gif', 'webp') if animated else ('jpg', 'webp', 'avif')):
+        for extension in (('gif', 'webp') if animated else ('jpg', 'webp', 'avif', 'tiff', 'v')):
             name = ('animated-' if animated else '') + extension
             path = directory / name
             path = path.with_suffix('.' + extension)
@@ -224,6 +224,8 @@ def main():
                     uploaded = wait_image(ordinary, ordinary.upload(fixtures[key])['id'])
                     assert uploaded['frames'] == (2 if key in ('gif','animated-webp') else 1), (key,uploaded)
                 ordinary.upload(fixtures['avif'],expected=422)
+                for unsupported in ['tiff', 'v']:
+                    ordinary.upload(fixtures[unsupported],name='disguised.png',expected=422)
                 ordinary.upload(b'<svg xmlns="http://www.w3.org/2000/svg"><rect>',expected=422)
                 ordinary.upload(b'<html><script>alert(1)</script></html>',expected=422)
                 ordinary.upload(fixtures['png'][:-5],expected=422)
