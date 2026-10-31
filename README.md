@@ -30,7 +30,7 @@ Conversion, public result links, and basic gallery management are available. Pri
 
 ## What is available today?
 
-The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. R2 has been exercised with a disposable test prefix (S3-compatible preflight plus full upload, delivery and restart runs on SQLite and MySQL); AWS S3 has not been verified. The current `dev` source includes the security update for this version: Go 1.26.10, patched Go dependencies, and a pinned native runtime with reviewed advisory dispositions. Earlier builds carrying the same version do not include this update; use the current `dev` commit and its matching checked build. There is no GitHub Release for this version; earlier downloads remain on the [Releases page](https://github.com/kserksi/Pebril/releases).
+The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. R2 has been exercised with a disposable test prefix (S3-compatible preflight plus full upload, delivery and restart runs on SQLite and MySQL); AWS S3 has not been verified. The current `dev` source includes the security update for this version: Go 1.26.10, patched Go dependencies, and a pinned native runtime with reviewed advisory dispositions. Earlier builds carrying the same version do not include this update; use the current `dev` commit and its matching checked build. Checked builds of the current `dev` source are published as development prereleases on the [Releases page](https://github.com/kserksi/Pebril/releases).
 
 | Capability | Current status |
 |---|---|
@@ -110,7 +110,7 @@ Shared pages may be counted repeatedly, causing earlier degradation. Filesystems
 
 ## Build and checks
 
-With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days. Automatic prerelease publication is paused. Pushes to `dev`, pull requests and `main` do not create Releases while it remains paused.
+With Go, GCC, Rust/Cargo, pkg-config, compatible libvips development files, Python, and ELF inspection tools available, run `./scripts/build.sh`. Output is placed in `dist/`; Go and Rust lockfiles pin dependencies. GitHub Actions builds and tests pushes to `dev` and `main` and pull requests targeting them. Checked packages are retained as Actions artifacts for seven days. Verified development packages are published as prereleases from `dev` pushes and manual dispatches; pull requests and `main` never publish.
 
 For each release, synchronize this README's version, release/download links, available capabilities, and remaining scope before building and pushing. Verify the packaged README matches the approved source, then check the live README and release links after publication. Do not claim an unpublished version is available. Published tags and assets remain unchanged when correcting documentation.
 
