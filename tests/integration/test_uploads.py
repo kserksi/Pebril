@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Upload acceptance checks. Credentials are generated or supplied through private stdin, never stored in source."""
 import argparse
+import atexit
 import ctypes
 import hashlib
 import http.cookiejar
@@ -96,13 +97,49 @@ def wait_image(client, identifier, state='completed', timeout=20):
         time.sleep(.05)
     raise AssertionError(('Image state timeout',state,image))
 
+class RemoteStorage:
+    """One isolated S3 namespace prefix. Credentials stay in a private file and are never printed."""
+    def __init__(self, connection):
+        self.directory = Path(tempfile.mkdtemp(prefix='s3-fixture-', dir=ROOT / '.build'))
+        details = json.loads(Path(connection).read_text())
+        missing = {'endpoint', 'bucket', 'region', 'access_key_id', 'secret_access_key', 'addressing'} - details.keys()
+        assert not missing, f'S3 connection file is missing {sorted(missing)}'
+        self.prefix = details.get('prefix', 'pebril-test/').rstrip('/') + '/uploads-' + secrets.token_hex(6) + '/'
+        self.details = details
+        self.file = self.directory / 'connection.json'
+        self.file.write_text(json.dumps(dict(details, prefix=self.prefix)))
+        self.file.chmod(0o600)
+        self.helper = self.directory / 'storage-fixture'
+        build = {key: value for key, value in os.environ.items() if not key.startswith('PEBRIL_')}
+        build.update(GOCACHE=str(ROOT / '.build/go-cache'), GOMODCACHE=str(ROOT / '.build/go-mod'), GOPATH=str(ROOT / '.build/go-path'))
+        subprocess.run(['go', 'build', '-o', str(self.helper), './tests/integration/storage_fixture'], cwd=ROOT, env=build, check=True)
+        atexit.register(self.close)
+    def prepare_config(self, target):
+        template = json.loads((OUTPUT / 'config.example.json').read_text())
+        template['upload_formats']['avif'] = False
+        template['storage'] = {'backend': 's3', 's3': dict({key: self.details[key] for key in ('endpoint', 'bucket', 'region', 'access_key_id', 'secret_access_key', 'addressing')}, prefix=self.prefix)}
+        target.write_text(json.dumps(template, indent=2))
+        target.chmod(0o600)
+    def run(self, *arguments):
+        return subprocess.run([str(self.helper), '-config', str(self.file), '-prefix', self.prefix, *arguments], capture_output=True, text=True)
+    def close(self):
+        try: self.run('cleanup')
+        except OSError: pass
+        shutil.rmtree(self.directory, ignore_errors=True)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--credentials-stdin', action='store_true')
     parser.add_argument('--data-dir', type=Path, help='Authorized isolated development data; credentials remain hashed here')
+    parser.add_argument('--storage', choices=('local', 's3'), default=os.environ.get('PEBRIL_TEST_STORAGE', 'local'), help='Storage backend exercised by this run')
+    parser.add_argument('--s3-config', type=Path, help='Private JSON connection file required by --storage s3')
     args = parser.parse_args()
     if args.data_dir and (not args.credentials_stdin or args.data_dir.resolve() != (ROOT / 'data/devtest').resolve()):
         parser.error('Retained development data requires private credentials and the designated isolated directory')
+    if (args.storage == 's3') != (args.s3_config is not None):
+        parser.error('--storage s3 needs exactly one private --s3-config connection file')
+    if args.storage == 's3' and args.data_dir:
+        parser.error('Remote storage runs use their own disposable data directory')
     credentials = json.load(__import__('sys').stdin) if args.credentials_stdin else {'admin_user': secrets.token_hex(8), 'admin_password': secrets.token_urlsafe(24), 'user': secrets.token_hex(8), 'password': secrets.token_urlsafe(24)}
     (ROOT / '.build').mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='upload-integration-', dir=ROOT / '.build') as temporary:
@@ -115,6 +152,8 @@ def main():
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]
         data = args.data_dir.resolve() if args.data_dir else root / 'data'
+        remote = RemoteStorage(args.s3_config) if args.storage == 's3' else None
+        if remote: remote.prepare_config(root / 'config.json')
         (root / '.env').write_text(f'PEBRIL_LISTEN=127.0.0.1:{port}\nPEBRIL_DATA_DIR={data}\n')
         env = {key:value for key,value in os.environ.items() if not key.startswith('PEBRIL_')}
         check = subprocess.run([str(executable), 'check'], cwd='/', env=env, capture_output=True, timeout=180)
@@ -213,7 +252,11 @@ def main():
                 assert b'<script' not in content and b'onload=' not in content and b'<rect' in content
                 assert headers['Cache-Control'] == 'public, max-age=259200, s-maxage=1296000'
                 assert 'sandbox' in headers['Content-Security-Policy']
-                assert (data / 'image/public/.objects' / hashlib.sha256(content).hexdigest()).exists()
+                digest = hashlib.sha256(content).hexdigest()
+                if remote:
+                    assert remote.run('exists', digest).returncode == 0, 'Sanitized copy is missing from remote storage'
+                else:
+                    assert (data / 'image/public/.objects' / digest).exists()
                 assert anonymous.request('/image/' + first['id'])[1]['Content-Type'] == 'image/webp'
                 with sqlite3.connect(database) as connection:
                     hashes = connection.execute('SELECT hash FROM images WHERE id IN (?,?)',(first['id'],second['id'])).fetchall()
@@ -324,6 +367,11 @@ def main():
             with sqlite3.connect(database) as connection: connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             for relative in ['.incoming','.converting','image']:
                 shutil.rmtree(data / relative,ignore_errors=True)
-    print('Upload integration passed: authentication, scopes, content safety, limits, SVG delivery, deduplication, quota, revocation, lost HTTP response recovery, restart persistence and cleanup.')
+        if remote:
+            cleaned = remote.run('cleanup')
+            assert cleaned.returncode == 0, cleaned.stderr
+            counted = json.loads(remote.run('count').stdout)
+            assert counted['objects'] == 0, ('Remote storage cleanup left objects', counted)
+    print(f"Upload integration passed ({args.storage} storage): authentication, scopes, content safety, limits, SVG delivery, deduplication, quota, revocation, lost HTTP response recovery, restart persistence and cleanup.")
 
 if __name__ == '__main__': main()
