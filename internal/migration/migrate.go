@@ -31,8 +31,11 @@ var tables = []table{
 	{name: "users", columns: "id,username,password,admin,status,quota,used", order: "id", binary: map[string]bool{"password": true}, numbers: map[string]bool{"id": true, "admin": true, "quota": true, "used": true}},
 	{name: "sessions", columns: "hash,user_id,csrf,expires", order: "hash", numbers: map[string]bool{"user_id": true, "expires": true}},
 	{name: "upload_tokens", columns: "user_id,hash", order: "user_id", numbers: map[string]bool{"user_id": true}},
-	{name: "images", columns: "id,user_id,state,policy,created_at,format,bytes,width,height,frames,error,hash,generation,attempts,next_run,fallback,delivered", order: "id", binary: map[string]bool{"policy": true}, numbers: map[string]bool{"user_id": true, "created_at": true, "bytes": true, "width": true, "height": true, "frames": true, "generation": true, "attempts": true, "next_run": true, "fallback": true, "delivered": true}},
+	{name: "images", columns: "id,user_id,state,policy,created_at,format,bytes,width,height,frames,error,hash,generation,attempts,next_run,fallback,delivered,visibility", order: "id", binary: map[string]bool{"policy": true}, numbers: map[string]bool{"user_id": true, "created_at": true, "bytes": true, "width": true, "height": true, "frames": true, "generation": true, "attempts": true, "next_run": true, "fallback": true, "delivered": true}},
 	{name: "image_files", columns: "image_id,role,hash,bytes,format,width,height,frames", order: "image_id,role", numbers: map[string]bool{"bytes": true, "width": true, "height": true, "frames": true}},
+	{name: "image_keys", columns: "image_id,hash,generation,created_at,expires_at,lifetime_ms", order: "image_id", numbers: map[string]bool{"generation": true, "created_at": true, "expires_at": true, "lifetime_ms": true}},
+	{name: "tags", columns: "id,user_id,name,created_at", order: "id", numbers: map[string]bool{"id": true, "user_id": true, "created_at": true}},
+	{name: "image_tags", columns: "image_id,tag_id", order: "image_id,tag_id", numbers: map[string]bool{"tag_id": true}},
 }
 
 type content struct {
@@ -58,9 +61,19 @@ type Options struct {
 func readTables(db *sql.DB, version int) ([][][]any, error) {
 	result := make([][][]any, len(tables))
 	for n, t := range tables {
+		// Schema-6 records are absent from older sources; keep the target column list
+		// stable so both sides of the inventory digest describe the same shapes.
+		if version < 6 && (t.name == "image_keys" || t.name == "tags" || t.name == "image_tags") {
+			continue
+		}
 		columns := t.columns
-		if t.name == "images" && version == 3 {
-			columns = strings.ReplaceAll(columns, ",delivered", ",0 AS delivered")
+		if t.name == "images" {
+			if version < 6 {
+				columns = strings.ReplaceAll(columns, ",visibility", ",'public' AS visibility")
+			}
+			if version == 3 {
+				columns = strings.ReplaceAll(columns, ",delivered", ",0 AS delivered")
+			}
 		}
 		rows, err := db.Query("SELECT " + columns + " FROM " + t.name + " ORDER BY " + t.order)
 		if err != nil {
@@ -406,7 +419,7 @@ func Run(ctx context.Context, options Options) (err error) {
 			_ = save(path, state)
 		}
 	}()
-	current, err := readTables(destination.DB, 4)
+	current, err := readTables(destination.DB, 6)
 	if err != nil {
 		return err
 	}
@@ -467,7 +480,7 @@ func Run(ctx context.Context, options Options) (err error) {
 	if err = progress("verifying"); err != nil {
 		return err
 	}
-	copied, err := readTables(destination.DB, 4)
+	copied, err := readTables(destination.DB, 6)
 	if err != nil {
 		return err
 	}

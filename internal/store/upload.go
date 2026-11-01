@@ -33,6 +33,7 @@ type Image struct {
 	Height     int             `json:"height,omitempty"`
 	Frames     int             `json:"frames,omitempty"`
 	Delivered  int64           `json:"-"`
+	Visibility Visibility      `json:"visibility"`
 	Created    int64           `json:"created_at"`
 	URL        string          `json:"url,omitempty"`
 	Error      string          `json:"error,omitempty"`
@@ -137,7 +138,7 @@ func (s *Store) Image(id string) (Image, error) {
 func readImage(tx *sql.Tx, id string) (Image, error) {
 	var i Image
 	var policy []byte
-	err := tx.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback,delivered FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary, &i.Delivered)
+	err := tx.QueryRow("SELECT id,user_id,state,format,bytes,width,height,frames,created_at,error,hash,policy,generation,attempts,next_run,fallback,delivered,visibility FROM images WHERE id=?", id).Scan(&i.ID, &i.UserID, &i.State, &i.Format, &i.Bytes, &i.Width, &i.Height, &i.Frames, &i.Created, &i.Error, &i.Hash, &policy, &i.Generation, &i.Attempts, &i.NextRun, &i.Temporary, &i.Delivered, &i.Visibility)
 	if err != nil {
 		return i, err
 	}

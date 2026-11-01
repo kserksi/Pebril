@@ -156,6 +156,8 @@ func accountRoutes(router *gin.Engine, service *auth.Service, upload *uploads.Se
 		return
 	}
 	galleryRoutes(router, service, upload)
+	visibilityRoutes(router, service, upload)
+	tagsRoutes(router, service, upload)
 	router.POST("/api/v1/uploads", func(c *gin.Context) {
 		var user store.User
 		var err error

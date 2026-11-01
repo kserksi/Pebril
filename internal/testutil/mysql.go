@@ -62,14 +62,14 @@ func MySQLDeployment(t *testing.T, d config.Deployment, lane string) config.Depl
 			t.Error(e)
 		}
 		rows.Close()
-		owned := map[string]bool{"image_files": true, "images": true, "sessions": true, "upload_tokens": true, "users": true, "object_keys": true, "deployment": true, "schema_migrations": true}
+		owned := map[string]bool{"image_tags": true, "tags": true, "image_keys": true, "image_files": true, "images": true, "sessions": true, "upload_tokens": true, "users": true, "object_keys": true, "deployment": true, "schema_migrations": true}
 		for _, name := range tables {
 			if !owned[name] {
 				t.Error("Unknown table; refusing fixture cleanup")
 				return
 			}
 		}
-		for _, name := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
+		for _, name := range []string{"image_tags", "tags", "image_keys", "image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
 			if _, e = control.Exec("DROP TABLE IF EXISTS " + name); e != nil {
 				t.Error(e)
 			}

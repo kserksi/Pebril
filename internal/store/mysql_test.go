@@ -59,7 +59,7 @@ func TestMySQLBusinessAndConnectionLoss(t *testing.T) {
 			t.Error("Refusing fixture cleanup after identity mismatch")
 			return
 		}
-		for _, table := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
+		for _, table := range []string{"image_tags", "tags", "image_keys", "image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
 			if _, e := control.Exec("DROP TABLE " + table); e != nil {
 				t.Error(e)
 			}
@@ -109,7 +109,7 @@ func TestMySQLBusinessAndConnectionLoss(t *testing.T) {
 	}
 	second.Close()
 	defer func() {
-		for _, table := range []string{"image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
+		for _, table := range []string{"image_tags", "tags", "image_keys", "image_files", "images", "sessions", "upload_tokens", "users", "object_keys", "deployment", "schema_migrations"} {
 			if _, e := independentControl.Exec("DROP TABLE " + table); e != nil {
 				t.Error(e)
 			}

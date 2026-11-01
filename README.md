@@ -30,12 +30,12 @@ Conversion, public result links, and basic gallery management are available. Pri
 
 ## What is available today?
 
-The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. R2 has been exercised with a disposable test prefix (S3-compatible preflight plus full upload, delivery and restart runs on SQLite and MySQL); AWS S3 has not been verified. The current `dev` source includes the security update for this version: Go 1.26.10, patched Go dependencies, and a pinned native runtime with reviewed advisory dispositions. Earlier builds carrying the same version do not include this update; use the current `dev` commit and its matching checked build. Checked builds of the current `dev` source are published as development prereleases on the [Releases page](https://github.com/kserksi/Pebril/releases).
+The development branch is **0.0.10-dev**, adding MySQL 8.4 and generic S3-compatible storage alongside SQLite and local storage. Cloudflare R2 is the supported object store; the S3-compatible path is implemented and exercised against R2 (preflight, upload, delivery, restart on SQLite and MySQL). AWS S3 is not in scope for this release and remains theoretically supported through the same S3 API. The current `dev` source includes the security update for this version: Go 1.26.10, patched Go dependencies, and a pinned native runtime with reviewed advisory dispositions. Earlier builds carrying the same version do not include this update; use the current `dev` commit and its matching checked build. Checked builds of the current `dev` source are published as development prereleases on the [Releases page](https://github.com/kserksi/Pebril/releases).
 
 | Capability | Current status |
 |---|---|
 | Configuration, JSON hot reload, SQLite, and readiness checks | Available |
-| MySQL 8.4 and generic S3-compatible storage | Implemented; exercised against Cloudflare R2; AWS S3 acceptance pending |
+| MySQL 8.4 and Cloudflare R2 object storage | Implemented and exercised against R2; the S3-compatible path is theoretical beyond R2 |
 | Administrator initialization, login/logout, and upload-only tokens | Available |
 | Image reception, content validation, quota checks, and safe storage | Available |
 | Static conversion | PNG, JPEG, WebP, and deployment-enabled AVIF output |

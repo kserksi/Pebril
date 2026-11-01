@@ -48,6 +48,9 @@ func HandlerWithUploads(version string, manager *config.Manager, database *store
 		c.JSON(200, gin.H{"name": "Pebril", "version": version, "stage": "conversion", "config_revision": manager.Snapshot().Revision, "sqlite": database.Backend() == "sqlite" && database.Ping() == nil, "database": gin.H{"backend": database.Backend(), "ready": database.Ping() == nil}, "storage": gin.H{"backend": manager.Storage().Backend, "ready": upload == nil && manager.Storage().Backend == "local" || upload != nil && upload.StorageReady(c.Request.Context()) == nil}, "native": gin.H{"ready": capability.Ready, "libvips_version": capability.VipsVersion, "svg": capability.SVG, "gif": capability.GIF, "avif_enabled": capability.AVIF}})
 	})
 	accountRoutes(router, authentication, upload)
+	if upload != nil {
+		privateRoutes(router, upload)
+	}
 	files, _ := fs.Sub(assets, "web")
 	for _, name := range []string{"index.html", "app.js", "style.css"} {
 		name := name

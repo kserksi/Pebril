@@ -163,10 +163,10 @@ func (s *Store) mysqlSchema(existingOnly, recovery bool) error {
 	}
 	if tables != 0 {
 		var version int
-		if err := s.DB.QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil || version < 4 || version > 5 {
+		if err := s.DB.QueryRow("SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil || version < 4 || version > 6 {
 			return errors.New("Unsupported, unrelated or incomplete MySQL schema; restore a matching backup or recreate the owned empty target")
 		}
-		if version == 5 && tables != 8 || version == 4 && tables != 7 {
+		if version == 6 && tables != 11 || version == 5 && tables != 8 || version == 4 && tables != 7 {
 			return errors.New("MySQL schema table inventory does not match the supported version")
 		}
 		for _, query := range []string{
@@ -193,13 +193,45 @@ func (s *Store) mysqlSchema(existingOnly, recovery bool) error {
 			if _, err := s.DB.Exec("INSERT INTO schema_migrations VALUES(5,?)", time.Now().UTC().UnixMilli()); err != nil {
 				return errors.New("Object-registry schema version update failed; retry only after checking the stopped database")
 			}
+			version = 5
 		}
-		if version == 5 || version == 4 && !recovery {
+		if version == 5 && !recovery {
+			for _, statement := range []string{
+				"ALTER TABLE images ADD COLUMN visibility VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'public', ADD CONSTRAINT images_visibility CHECK(visibility IN('public','private'))",
+				mysqlImageKeysDDL,
+				mysqlTagsDDL,
+				mysqlImageTagsDDL,
+				"CREATE INDEX images_user_time ON images(user_id,created_at DESC,id DESC)",
+			} {
+				if _, err := s.DB.Exec(statement); err != nil {
+					return errors.New("Image-access schema upgrade failed; retain the matching backup before retrying")
+				}
+			}
+			if _, err := s.DB.Exec("INSERT INTO schema_migrations VALUES(6,?)", time.Now().UTC().UnixMilli()); err != nil {
+				return errors.New("Image-access schema version update failed; retry only after checking the stopped database")
+			}
+			version = 6
+		}
+		if version >= 5 {
 			rows, err := s.DB.Query("SELECT o.hash,o.generation,o.active_generation,d.storage_backend FROM object_keys o CROSS JOIN deployment d LIMIT 0")
 			if err != nil {
 				return errors.New("Invalid object-registry schema")
 			}
 			rows.Close()
+		}
+		if version >= 6 {
+			for _, query := range []string{
+				"SELECT id,user_id,state,policy,created_at,format,bytes,width,height,frames,error,hash,generation,attempts,next_run,fallback,delivered,visibility FROM images LIMIT 0",
+				"SELECT image_id,hash,generation,created_at,expires_at,lifetime_ms FROM image_keys LIMIT 0",
+				"SELECT id,user_id,name,created_at FROM tags LIMIT 0",
+				"SELECT image_id,tag_id FROM image_tags LIMIT 0",
+			} {
+				rows, err := s.DB.Query(query)
+				if err != nil {
+					return errors.New("MySQL image-access schema fields do not match the supported version")
+				}
+				rows.Close()
+			}
 		}
 		return nil
 	}
@@ -211,8 +243,11 @@ func (s *Store) mysqlSchema(existingOnly, recovery bool) error {
 		`CREATE TABLE users(id BIGINT PRIMARY KEY AUTO_INCREMENT,username VARBINARY(64) NOT NULL UNIQUE,password BLOB NOT NULL,admin TINYINT NOT NULL DEFAULT 0 CHECK(admin IN(0,1)),status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'active',quota BIGINT NOT NULL,used BIGINT NOT NULL DEFAULT 0,administrator TINYINT GENERATED ALWAYS AS (CASE WHEN admin=1 THEN 1 ELSE NULL END) STORED UNIQUE) ENGINE=InnoDB`,
 		`CREATE TABLE sessions(hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,user_id BIGINT NOT NULL,csrf VARCHAR(43) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,expires BIGINT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id)) ENGINE=InnoDB`,
 		`CREATE TABLE upload_tokens(user_id BIGINT PRIMARY KEY,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,FOREIGN KEY(user_id) REFERENCES users(id)) ENGINE=InnoDB`,
-		`CREATE TABLE images(id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,user_id BIGINT NOT NULL,state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,policy LONGBLOB NOT NULL,created_at BIGINT NOT NULL,format VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',bytes BIGINT NOT NULL DEFAULT 0,width BIGINT NOT NULL DEFAULT 0,height BIGINT NOT NULL DEFAULT 0,frames BIGINT NOT NULL DEFAULT 0,error TEXT NOT NULL,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',generation BIGINT NOT NULL DEFAULT 0,attempts BIGINT NOT NULL DEFAULT 0,next_run BIGINT NOT NULL DEFAULT 0,fallback TINYINT NOT NULL DEFAULT 0,delivered BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(user_id) REFERENCES users(id),INDEX image_tasks(state,user_id),INDEX conversion_schedule(state,next_run,user_id,created_at)) ENGINE=InnoDB`,
+		`CREATE TABLE images(id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,user_id BIGINT NOT NULL,state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,policy LONGBLOB NOT NULL,created_at BIGINT NOT NULL,format VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',bytes BIGINT NOT NULL DEFAULT 0,width BIGINT NOT NULL DEFAULT 0,height BIGINT NOT NULL DEFAULT 0,frames BIGINT NOT NULL DEFAULT 0,error TEXT NOT NULL,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',generation BIGINT NOT NULL DEFAULT 0,attempts BIGINT NOT NULL DEFAULT 0,next_run BIGINT NOT NULL DEFAULT 0,fallback TINYINT NOT NULL DEFAULT 0,delivered BIGINT NOT NULL DEFAULT 0,visibility VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'public' CHECK(visibility IN('public','private')),FOREIGN KEY(user_id) REFERENCES users(id),INDEX image_tasks(state,user_id),INDEX conversion_schedule(state,next_run,user_id,created_at),INDEX images_user_time(user_id,created_at DESC,id DESC)) ENGINE=InnoDB`,
 		`CREATE TABLE image_files(image_id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,role VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,bytes BIGINT NOT NULL,format VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,width BIGINT NOT NULL,height BIGINT NOT NULL,frames BIGINT NOT NULL,PRIMARY KEY(image_id,role),FOREIGN KEY(image_id) REFERENCES images(id) ON DELETE CASCADE,INDEX image_file_hash(hash)) ENGINE=InnoDB`,
+		mysqlImageKeysDDL,
+		mysqlTagsDDL,
+		mysqlImageTagsDDL,
 		`CREATE TABLE deployment(id BIGINT PRIMARY KEY CHECK(id=1),namespace VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,owner VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',storage_backend VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '') ENGINE=InnoDB`,
 		mysqlObjectKeysDDL,
 	}
@@ -233,7 +268,7 @@ func (s *Store) mysqlSchema(existingOnly, recovery bool) error {
 	if _, err = tx.Exec("INSERT INTO deployment(id,namespace) VALUES(1,?)", namespace); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("INSERT INTO schema_migrations VALUES(5,?)", time.Now().UTC().UnixMilli()); err != nil {
+	if _, err = tx.Exec("INSERT INTO schema_migrations VALUES(6,?)", time.Now().UTC().UnixMilli()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -298,3 +333,6 @@ type quietMySQLLog struct{}
 func (quietMySQLLog) Print(...any) {}
 
 const mysqlObjectKeysDDL = "CREATE TABLE IF NOT EXISTS object_keys(hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,generation BIGINT NOT NULL CHECK(generation>=0),active_generation BIGINT NULL,CHECK(active_generation IS NULL OR (active_generation>=0 AND active_generation<=generation))) ENGINE=InnoDB"
+const mysqlImageKeysDDL = "CREATE TABLE IF NOT EXISTS image_keys(image_id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,generation BIGINT NOT NULL DEFAULT 1 CHECK(generation>=1),created_at BIGINT NOT NULL,expires_at BIGINT NOT NULL,lifetime_ms BIGINT NOT NULL CHECK(lifetime_ms BETWEEN 60000 AND 259200000),FOREIGN KEY(image_id) REFERENCES images(id) ON DELETE CASCADE) ENGINE=InnoDB"
+const mysqlTagsDDL = "CREATE TABLE IF NOT EXISTS tags(id BIGINT PRIMARY KEY AUTO_INCREMENT,user_id BIGINT NOT NULL,name VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_as_cs NOT NULL,created_at BIGINT NOT NULL,UNIQUE(user_id,name),FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB"
+const mysqlImageTagsDDL = "CREATE TABLE IF NOT EXISTS image_tags(image_id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,tag_id BIGINT NOT NULL,PRIMARY KEY(image_id,tag_id),FOREIGN KEY(image_id) REFERENCES images(id) ON DELETE CASCADE,FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE,INDEX image_tags_tag(tag_id)) ENGINE=InnoDB"

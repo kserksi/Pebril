@@ -48,7 +48,7 @@ func TestRealMySQLStoppedMigration(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer db.Close()
-			actual, e := readTables(db.DB, 5)
+			actual, e := readTables(db.DB, 6)
 			if e != nil || digest(expected) != digest(actual) {
 				t.Fatal("MySQL record inventory changed", e)
 			}

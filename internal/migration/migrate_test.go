@@ -89,6 +89,11 @@ func sourceFixture(t *testing.T, version int) (config.Deployment, [][][]any) {
 	if _, err = database.DB.Exec("INSERT INTO upload_tokens(user_id,hash) VALUES(1,'token-hash')"); err != nil {
 		t.Fatal(err)
 	}
+	if version < 6 {
+		if _, err = database.DB.Exec("DROP TABLE image_tags; DROP TABLE tags; DROP TABLE image_keys; DROP INDEX images_user_time; ALTER TABLE images DROP COLUMN visibility; DELETE FROM schema_migrations WHERE version=6"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if version < 5 {
 		if _, err = database.DB.Exec("ALTER TABLE deployment DROP COLUMN storage_backend; DROP TABLE object_keys; DELETE FROM schema_migrations WHERE version=5"); err != nil {
 			t.Fatal(err)
@@ -148,7 +153,7 @@ func TestOfflineMigrationPreservesSourceRecordsAndReruns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			actual, err := readTables(database.DB, 4)
+			actual, err := readTables(database.DB, 6)
 			if err != nil || digest(expected) != digest(actual) {
 				t.Fatal("Record identities, credentials, snapshots or charges changed", err)
 			}

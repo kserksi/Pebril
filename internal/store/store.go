@@ -100,8 +100,8 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > 5 {
-		return fail(fmt.Errorf("Database schema version %d exceeds supported version 5", version))
+	if version > 6 {
+		return fail(fmt.Errorf("Database schema version %d exceeds supported version 6", version))
 	}
 	if version == 0 {
 		_, err = tx.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().UnixMilli())
@@ -160,6 +160,18 @@ INSERT INTO schema_migrations(version,applied_at) VALUES(3,CAST(strftime('%s','n
 			return fail(err)
 		}
 		if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)", time.Now().UTC().UnixMilli()); err != nil {
+			return fail(err)
+		}
+	}
+	if version < 6 {
+		if _, err = tx.Exec(`
+ALTER TABLE images ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public' CHECK(visibility IN ('public','private'));
+CREATE TABLE image_keys(image_id TEXT PRIMARY KEY REFERENCES images(id) ON DELETE CASCADE,hash TEXT NOT NULL,generation INTEGER NOT NULL DEFAULT 1 CHECK(generation>=1),created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,lifetime_ms INTEGER NOT NULL CHECK(lifetime_ms BETWEEN 60000 AND 259200000));
+CREATE TABLE tags(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(user_id,name));
+CREATE TABLE image_tags(image_id TEXT NOT NULL REFERENCES images(id) ON DELETE CASCADE,tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,PRIMARY KEY(image_id,tag_id));
+CREATE INDEX image_tags_tag ON image_tags(tag_id);
+CREATE INDEX images_user_time ON images(user_id,created_at DESC,id DESC);
+INSERT INTO schema_migrations(version,applied_at) VALUES(6,?)`, time.Now().UTC().UnixMilli()); err != nil {
 			return fail(err)
 		}
 	}

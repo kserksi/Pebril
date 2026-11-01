@@ -326,6 +326,11 @@ func (s *Service) PublicFile(id string, cover bool) (store.Image, store.ImageFil
 	if err != nil {
 		return image, store.ImageFile{}, err
 	}
+	// Private records are reachable only through an authorized private-page
+	// visit; the public route must not confirm their existence.
+	if image.Visibility == store.VisibilityPrivate {
+		return image, store.ImageFile{}, os.ErrNotExist
+	}
 	var status string
 	if err = s.DB.DB.QueryRow("SELECT status FROM users WHERE id=?", image.UserID).Scan(&status); err != nil || status == "deleted" {
 		return image, store.ImageFile{}, os.ErrNotExist
