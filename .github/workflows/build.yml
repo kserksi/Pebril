@@ -78,4 +78,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SOURCE_COMMIT: ${{ github.sha }}
-        run: python3 scripts/build/release.py --artifacts .build/release --commit "$SOURCE_COMMIT" --version "$(cat VERSION)" --repo "$GH_REPO"
+        run: |
+          version="$(cat VERSION)"
+          if git ls-remote --tags origin "refs/tags/v$version" | grep -q .; then
+            echo "v$version already has a tag; skipping publication."
+            exit 0
+          fi
+          notes="release-notes/$version.md"
+          if [ -f "$notes" ]; then
+            python3 scripts/build/release.py --artifacts .build/release --commit "$SOURCE_COMMIT" --version "$version" --repo "$GH_REPO" --notes "$notes"
+          else
+            python3 scripts/build/release.py --artifacts .build/release --commit "$SOURCE_COMMIT" --version "$version" --repo "$GH_REPO"
+          fi
